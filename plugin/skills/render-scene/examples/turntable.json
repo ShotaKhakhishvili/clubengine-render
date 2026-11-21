@@ -1,0 +1,30 @@
+{
+  // A product turntable: the camera orbits a gold trophy on a pedestal in a bright studio (6 s loop)
+  "version": 1,
+  "output": { "width": 1080, "height": 1350, "fps": 30, "duration": 6 },
+  "environment": {
+    "sky": ["#dfe6f5", "#f4f1ee", "#ece8e4"],
+    "ground": "#ece6e0",
+    "ambient": 0.45
+  },
+  "materials": {
+    "pedestal": { "color": "#f7f4f0", "roughness": 0.5 },
+    "gold":     { "color": "#ffbf4d", "metallic": 1, "roughness": 0.22 },
+    "chrome":   { "color": "#d9dee8", "metallic": 1, "roughness": 0.12 }
+  },
+  "objects": [
+    { "id": "pedestal", "mesh": "cylinder", "material": "pedestal", "position": [0, 0, 0.2],  "scale": [1.5, 1.5, 0.4] },
+    { "id": "base",     "mesh": "cube",     "material": "chrome",   "position": [0, 0, 0.5],  "scale": [0.6, 0.6, 0.2] },
+    { "id": "stem",     "mesh": "cylinder", "material": "gold",     "position": [0, 0, 0.85], "scale": [0.14, 0.14, 0.5] },
+    { "id": "cup",      "mesh": "cone",     "material": "gold",     "position": [0, 0, 1.35], "rotation": [0, 0, 180], "scale": [0.8, 0.8, 0.6] },
+    { "id": "gem",      "mesh": "sphere",   "material": { "color": "#3fd8ff", "emissive": 1.2, "roughness": 0.2 }, "position": [0, 0, 1.85], "scale": 0.28 },
+    { "id": "key",  "light": { "type": "directional", "intensity": 1.2, "color": "#fff4e6" }, "position": [-3, -4, 6], "lookAt": [0, 0, 1] },
+    { "id": "fill", "light": { "type": "directional", "intensity": 0.35, "color": "#dfe8ff" }, "position": [4, 3, 3], "lookAt": [0, 0, 1] },
+    { "id": "glow", "light": { "type": "point", "intensity": 5, "color": "#3fd8ff", "radius": 2.5 }, "position": [0, 0, 2.2] },
+    { "id": "cam",  "camera": {}, "position": [3, 0, 2], "lookAt": [0, 0, 1.05] }
+  ],
+  "animations": [
+    { "target": "cam.position", "orbit": { "center": [0, 0, 0], "radius": 2.6, "height": 1.8, "period": 6, "startAngle": -150 } },
+    { "target": "gem.position.z", "wave": { "amplitude": 0.06, "period": 2 } }
+  ]
+}

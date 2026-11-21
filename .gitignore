@@ -1,0 +1,19 @@
+# Build output
+Build/
+dist/
+Project/bin/
+Project/Saved/
+
+# Renders
+renders/
+out/
+
+# Python
+__pycache__/
+*.pyc
+
+# IDEs
+.idea/
+.vs/
+.vscode/
+cmake-build-*/

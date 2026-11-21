@@ -1,0 +1,11 @@
+{
+  "name": "clubengine-render",
+  "displayName": "ClubEngine Render",
+  "version": "0.1.0",
+  "description": "Agent-native 3D rendering: describe a scene in JSON and ClubEngine renders it to PNG frames, MP4 or GIF.",
+  "author": { "name": "Shota Khakhishvili", "url": "https://github.com/ShotaKhakhishvili" },
+  "homepage": "https://github.com/ShotaKhakhishvili/clubengine-render",
+  "repository": "https://github.com/ShotaKhakhishvili/clubengine-render",
+  "license": "MIT",
+  "keywords": ["3d", "rendering", "animation", "game-engine", "opengl", "json"]
+}

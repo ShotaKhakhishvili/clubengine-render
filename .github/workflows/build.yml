@@ -1,0 +1,104 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    # Oldest supported Ubuntu, so the binaries run on as many distros as possible
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y g++-13 ninja-build libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libgl-dev xvfb libgl1-mesa-dri
+
+      - name: Build and package
+        env:
+          CC: gcc-13
+          CXX: g++-13
+        run: python3 Tools/build.py --bundle-runtime
+
+      - name: Render the examples headless
+        env:
+          CERENDER_HOME: dist/clubengine-render-linux-x64
+        run: |
+          for scene in plugin/skills/render-scene/examples/*.json; do
+            python3 plugin/scripts/cerender.py render "$scene" --preview --out "out/$(basename "$scene" .json)"
+          done
+          test -f out/hello/frame_0000.png
+          test -f out/robot/contact_sheet.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clubengine-render-linux-x64
+          path: dist/clubengine-render-linux-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: example-previews
+          path: out/
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-python
+
+      - name: Build and package
+        run: python Tools/build.py --bundle-runtime
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clubengine-render-windows-x64
+          path: dist/clubengine-render-windows-x64.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches plugin.json
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('plugin/.claude-plugin/plugin.json'))['version'])")
+          test "v$version" = "${GITHUB_REF_NAME}" || { echo "Tag ${GITHUB_REF_NAME} != plugin.json version $version"; exit 1; }
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clubengine-render-*
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            clubengine-render-linux-x64.zip
+            clubengine-render-windows-x64.zip
+          generate_release_notes: true

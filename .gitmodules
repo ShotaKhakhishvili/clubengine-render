@@ -1,0 +1,3 @@
+[submodule "External/KIU_ClubEngine"]
+	path = External/KIU_ClubEngine
+	url = https://github.com/ShotaKhakhishvili/KIU_ClubEngine.git

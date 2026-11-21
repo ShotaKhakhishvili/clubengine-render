@@ -1,0 +1,21 @@
+{
+  // A still image: three shapes on a pastel studio floor
+  "version": 1,
+  "output": { "width": 1080, "height": 1080 },
+  "environment": {
+    "sky": ["#a8c8ff", "#ffe8dc", "#f6dccf"],
+    "ground": "#f3d9cc"
+  },
+  "materials": {
+    "coral": { "color": "#ff7b5c", "roughness": 0.55 },
+    "sky":   { "color": "#5d8bff", "roughness": 0.3 },
+    "sun":   { "color": "#ffc94d", "roughness": 0.7 }
+  },
+  "objects": [
+    { "id": "cone", "mesh": "cone",   "material": "sun",   "position": [0.5, -1.05, 0.6], "scale": [0.8, 0.8, 1.2] },
+    { "id": "box",  "mesh": "cube",   "material": "coral", "position": [0, 0, 0.5], "rotation": [0, 30, 0] },
+    { "id": "ball", "mesh": "sphere", "material": "sky",   "position": [-0.3, 1.05, 0.4], "scale": 0.8 },
+    { "id": "sun",  "light": { "type": "directional" }, "position": [-3, -5, 6], "lookAt": [0, 0, 0] },
+    { "id": "cam",  "camera": {}, "position": [-2.9, -0.5, 1.7], "lookAt": [0, 0, 0.45] }
+  ]
+}

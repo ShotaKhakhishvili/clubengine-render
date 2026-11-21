@@ -1,0 +1,15 @@
+{
+  "name": "clubengine",
+  "description": "ClubEngine plugins for Claude: agent-native 3D rendering from JSON scenes.",
+  "owner": {
+    "name": "Shota Khakhishvili",
+    "url": "https://github.com/ShotaKhakhishvili"
+  },
+  "plugins": [
+    {
+      "name": "clubengine-render",
+      "source": "./plugin",
+      "description": "Write a JSON scene, get rendered PNG frames, MP4 or GIF from the ClubEngine renderer."
+    }
+  ]
+}

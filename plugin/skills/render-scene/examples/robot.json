@@ -1,0 +1,75 @@
+{
+  // A tiny story: a robot pops in, hops, waves at the camera and spins with joy (6 s).
+  // Shows how to build a character from primitives with groups as joints.
+  "version": 1,
+  "output": { "width": 1080, "height": 1350, "fps": 30, "duration": 6 },
+  "environment": {
+    "sky": ["#8fc8ff", "#fff1e3", "#ffe0c7"],
+    "ground": "#ffe0c7",
+    "ambient": 0.45
+  },
+  "materials": {
+    "shell":  { "color": "#ffcf3f", "roughness": 0.45 },
+    "accent": { "color": "#3a7bff", "roughness": 0.4 },
+    "dark":   { "color": "#262a3f", "roughness": 0.3 },
+    "eye":    { "color": "#6ff7ff", "emissive": 1.4 },
+    "bulb":   { "color": "#ff4d6d", "emissive": 1.2 },
+    "mint":   { "color": "#7be0b5", "roughness": 0.8 },
+    "peach":  { "color": "#ff9f7f", "roughness": 0.8 }
+  },
+  "objects": [
+    // The robot faces +X. "bot" is the root: moving it moves everything.
+    { "id": "bot", "position": [0, 0, 0] },
+
+    { "id": "legL", "parent": "bot", "mesh": "cylinder", "material": "dark",  "position": [0, -0.2, 0.18], "scale": [0.18, 0.18, 0.36] },
+    { "id": "legR", "parent": "bot", "mesh": "cylinder", "material": "dark",  "position": [0,  0.2, 0.18], "scale": [0.18, 0.18, 0.36] },
+    { "id": "body", "parent": "bot", "mesh": "cube",     "material": "shell", "position": [0, 0, 0.72],    "scale": [0.75, 0.9, 0.75] },
+    { "id": "belt", "parent": "bot", "mesh": "cube",     "material": "accent","position": [0, 0, 0.5],     "scale": [0.78, 0.93, 0.12] },
+
+    // Head pivots at the neck so it can tilt
+    { "id": "neck",  "parent": "bot",  "position": [0, 0, 1.1] },
+    { "id": "head",  "parent": "neck", "mesh": "cube",   "material": "shell", "position": [0, 0, 0.3],  "scale": [0.7, 0.8, 0.55] },
+    { "id": "face",  "parent": "neck", "mesh": "cube",   "material": "dark",  "position": [0.34, 0, 0.3], "scale": [0.04, 0.62, 0.38] },
+    { "id": "eyeL",  "parent": "neck", "mesh": "sphere", "material": "eye",   "position": [0.37, -0.15, 0.33], "scale": 0.13, "shadow": false },
+    { "id": "eyeR",  "parent": "neck", "mesh": "sphere", "material": "eye",   "position": [0.37,  0.15, 0.33], "scale": 0.13, "shadow": false },
+    { "id": "stick", "parent": "neck", "mesh": "cylinder", "material": "dark", "position": [0, 0, 0.7], "scale": [0.04, 0.04, 0.3], "shadow": false },
+    { "id": "tip",   "parent": "neck", "mesh": "sphere", "material": "bulb",  "position": [0, 0, 0.88], "scale": 0.13, "shadow": false },
+
+    // Arms hang from shoulder joints
+    { "id": "shoulderL", "parent": "bot", "position": [0, -0.52, 0.98] },
+    { "id": "armL",  "parent": "shoulderL", "mesh": "cylinder", "material": "accent", "position": [0, 0, -0.25], "scale": [0.13, 0.13, 0.5] },
+    { "id": "handL", "parent": "shoulderL", "mesh": "sphere",   "material": "dark",   "position": [0, 0, -0.55], "scale": 0.17 },
+    { "id": "shoulderR", "parent": "bot", "position": [0, 0.52, 0.98] },
+    { "id": "armR",  "parent": "shoulderR", "mesh": "cylinder", "material": "accent", "position": [0, 0, -0.25], "scale": [0.13, 0.13, 0.5] },
+    { "id": "handR", "parent": "shoulderR", "mesh": "sphere",   "material": "dark",   "position": [0, 0, -0.55], "scale": 0.17 },
+
+    // Set dressing
+    { "id": "bush1", "mesh": "sphere",   "material": "mint",  "position": [-2.2, -1.8, 0.35], "scale": 0.9 },
+    { "id": "bush2", "mesh": "sphere",   "material": "mint",  "position": [-2.6, -1.1, 0.25], "scale": 0.6 },
+    { "id": "tree",  "mesh": "cone",     "material": "mint",  "position": [-2.0, 2.0, 0.9],   "scale": [1.0, 1.0, 1.8] },
+    { "id": "rock",  "mesh": "cube",     "material": "peach", "position": [-1.2, -2.4, 0.2],  "rotation": [0, 35, 0], "scale": [0.5, 0.45, 0.4] },
+
+    { "id": "sun", "light": { "type": "directional", "intensity": 1.15, "color": "#fff3e2" }, "position": [5, -6, 7], "lookAt": [0, 0, 0] },
+    { "id": "cam", "camera": {}, "position": [3.4, -1.3, 1.6], "lookAt": [0, 0, 0.95] }
+  ],
+  "animations": [
+    // 0.0 - 0.6 pop in
+    { "target": "bot.scale", "keys": [[0, 0.01], [0.6, 1]], "ease": "outBack" },
+    // 0.7 - 1.5 hop with squash
+    { "target": "bot.position.z", "keys": [[0.7, 0], [1.05, 0.55, "inQuad"], [1.4, 0]], "ease": "outQuad" },
+    { "target": "bot.scale", "keys": [[1.4, [1, 1, 1]], [1.5, [1.1, 1.1, 0.85]], [1.75, [1, 1, 1]]], "ease": "outQuad" },
+    // 1.7 - 3.9 wave and tilt the head
+    { "target": "shoulderR.rotation.z", "keys": [[1.7, 0], [2.1, -150, "inOutSine"], [2.4, -120], [2.7, -150], [3.0, -120], [3.3, -150], [3.9, 0]], "ease": "inOutSine" },
+    { "target": "neck.rotation.z", "keys": [[1.8, 0], [2.2, 12], [3.4, 12], [3.8, 0]] },
+    { "target": "shoulderL.rotation.z", "wave": { "amplitude": 4, "period": 1.2 } },
+    // Antenna bulb blinks
+    { "target": "tip.scale", "keys": [[0, 0.13], [2.0, 0.13], [2.1, 0.2], [2.3, 0.13], [3.0, 0.13], [3.1, 0.2], [3.3, 0.13]] },
+    // 4.0 - 5.4 jump and spin with joy
+    { "target": "bot.rotation.y", "keys": [[4.0, 0], [5.0, 360]], "ease": "inOutCubic" },
+    { "target": "bot.position.z", "keys": [[4.0, 0], [4.5, 0.7, "inQuad"], [5.0, 0]], "ease": "outQuad" },
+    { "target": "shoulderL.rotation.z", "keys": [[4.0, 0], [4.4, 140], [5.2, 140], [5.6, 0]] },
+    { "target": "shoulderR.rotation.z", "keys": [[4.0, 0], [4.4, -140], [5.2, -140], [5.6, 0]] },
+    // Slow push in
+    { "target": "cam.position", "keys": [[0, [3.4, -1.3, 1.6]], [6, [2.7, -0.8, 1.4]]], "ease": "inOutSine" }
+  ]
+}
