@@ -206,12 +206,16 @@ void main()
         vec3 reflected = SkyColor(R) * (0.5 + u_Ambient) + vec3(softbox * 0.9);
         float fresnel = 0.04 + 0.96 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
         vec3 specularReflect = mix(surface.specularColor, vec3(1.0), fresnel * (1.0 - metallic) * 0.5);
-        vec3 lighting = surface.diffuseColor * ambient * occlusion
-                      + specularReflect * reflected * (1.0 - roughness * 0.75) * occlusion * (0.25 + 0.75 * metallic);
+        vec3 lighting = surface.diffuseColor * ambient * occlusion;
 
-        // Thin rim so silhouettes separate from the background
-        float rim = pow(1.0 - max(dot(N, V), 0.0), 4.0);
-        lighting += skyAmbient * rim * 0.25 * u_Ambient;
+        // Reflections and a thin rim so silhouettes separate from the background. Not on the ground: both peak
+        // at grazing angles, which would brighten it toward the horizon and show a line against the sky.
+        if (!isGround)
+        {
+            lighting += specularReflect * reflected * (1.0 - roughness * 0.75) * occlusion * (0.25 + 0.75 * metallic);
+            float rim = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+            lighting += skyAmbient * rim * 0.25 * u_Ambient;
+        }
 
         // Shadows block the first sun. One flat strength: overlapping flattened triangles sit at the
         // same depth, so anything that varies per triangle would flicker.

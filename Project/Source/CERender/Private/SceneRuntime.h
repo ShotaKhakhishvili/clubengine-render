@@ -44,7 +44,7 @@ private:
         const FObjectDesc* desc = nullptr;
         CE::AActor* actor = nullptr;
         CE::USceneComponent* root = nullptr;
-        CE::UStaticMeshComponent* mesh = nullptr;
+        CE::UStaticMeshComponent* mesh = nullptr;      // the root, or its child when the pivot moves the mesh
         CE::ULightComponent* light = nullptr;
         CE::TObjectHandle<CE::UMaterial> material;     // own instance, so color can animate per object
         FState base;
@@ -52,14 +52,33 @@ private:
         int depth = 0;                                 // parent chain length, parents update first
         CE::UStaticMeshComponent* shadowMesh = nullptr; // copy of the mesh, flattened onto the ground by the shader
         size_t rootIndex = 0;                          // top of the parent chain; one contact shadow per root
+        Vec3 boundsMin, boundsMax;                     // mesh bounds in the mesh's own space
+    };
+
+    struct FMesh
+    {
+        CE::TObjectHandle<CE::UStaticMesh> handle;
+        Vec3 boundsMin, boundsMax;
+    };
+
+    // A path sampled into a polyline with distances, for constant-speed travel
+    struct FPathCache
+    {
+        std::vector<Vec3> points;
+        std::vector<double> distance;
     };
 
     CE::TObjectHandle<CE::UMaterial> MakeMaterial(const FMaterialDesc& desc, int mode);
     void ApplyEnvironment(CE::UMaterial& material) const;
-    CE::TObjectHandle<CE::UStaticMesh> LoadMesh(const FObjectDesc& desc);
+    FMesh LoadMesh(const FObjectDesc& desc);
     CE::UStaticMeshComponent* SpawnMeshActor(CE::TObjectHandle<CE::UStaticMesh> mesh, CE::TObjectHandle<CE::UMaterial> material);
 
-    void ApplyTrack(const FTrackDesc& track, double time);
+    void Pose(double time, bool withFollow);
+    void ApplyTrack(size_t index, double time);
+    Vec3 SampleFollow(const FTrackDesc& track, double time);
+    void ApplyPath(size_t index, double time, FState& state);
+    void ApplyBounce(const FTrackDesc& track, double time, FState& state);
+    void ApplyWalk(const FTrackDesc& track, double time);
     void UpdateContactShadows();
     Vec3 WorldPositionOf(const std::string& id) const;
 
@@ -69,6 +88,9 @@ private:
 
     std::vector<FRuntimeObject> objects;               // sorted parents first
     std::map<std::string, size_t> indexById;
+    std::map<std::string, FMesh> meshCache;
+    std::vector<FPathCache> pathCaches;               // per track, filled for path tracks
+    std::vector<Vec3> followValues;                    // per track, the smoothed target of follow tracks
 
     CE::UStaticMeshComponent* sky = nullptr;
     CE::UStaticMeshComponent* ground = nullptr;

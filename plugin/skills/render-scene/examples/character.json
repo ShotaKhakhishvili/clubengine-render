@@ -1,0 +1,97 @@
+{
+  // Character template: a robot rig with hips, knees, feet and arms, and three ready-made moves (7 s):
+  // walk in (0-3 s), wave (3.2-5.2 s), kick a ball (5.4-7 s). Copy the rig, keep the joint ids, lift the tracks you need.
+  //
+  // Rig rules: the robot faces +X. Every joint is a group (no mesh) placed at the pivot, with the visible parts as
+  // its children hanging down along -Z. On a hanging limb, +pitch swings it forward, -pitch back; roll swings it
+  // sideways: -roll toward +Y (the robot's right), +roll toward -Y (its left).
+  "version": 1,
+  "output": { "width": 1080, "height": 1350, "fps": 30, "duration": 7 },
+  "environment": {
+    "sky": ["#bcd7ff", "#fff1e6", "#ffe1d2"],
+    "ground": "#f7d6c6",
+    "ambient": 0.45
+  },
+  "materials": {
+    "shell":  { "color": "#ffd23f", "roughness": 0.45 },
+    "accent": { "color": "#3a7bff", "roughness": 0.4 },
+    "dark":   { "color": "#262a3f", "roughness": 0.3 },
+    "eye":    { "color": "#6ff7ff", "emissive": 1.4 },
+    "bulb":   { "color": "#ff4d6d", "emissive": 1.2 }
+  },
+  "objects": [
+    // Root: move and turn the whole robot with this
+    { "id": "bot", "position": [-1.6, 0, 0] },
+    { "id": "hips", "parent": "bot", "position": [0, 0, 0.63] },
+    { "id": "pelvis", "parent": "hips", "mesh": "roundbox", "bevel": 0.3, "material": "dark", "position": [0, 0, 0.02], "scale": [0.3, 0.4, 0.16] },
+
+    // Legs: hip -> knee -> ankle joints
+    { "id": "hipL",   "parent": "hips",  "position": [0, -0.12, -0.02] },
+    { "id": "thighL", "parent": "hipL",  "mesh": "cylinder", "material": "dark", "position": [0, 0, -0.13], "scale": [0.12, 0.12, 0.26] },
+    { "id": "kneeL",  "parent": "hipL",  "position": [0, 0, -0.27] },
+    { "id": "shinL",  "parent": "kneeL", "mesh": "cylinder", "material": "accent", "position": [0, 0, -0.12], "scale": [0.1, 0.1, 0.24] },
+    { "id": "ankleL", "parent": "kneeL", "position": [0, 0, -0.27] },
+    { "id": "footL",  "parent": "ankleL", "mesh": "roundbox", "bevel": 0.4, "material": "dark", "position": [0.05, 0, -0.03], "scale": [0.26, 0.15, 0.08] },
+    { "id": "hipR",   "parent": "hips",  "position": [0, 0.12, -0.02] },
+    { "id": "thighR", "parent": "hipR",  "mesh": "cylinder", "material": "dark", "position": [0, 0, -0.13], "scale": [0.12, 0.12, 0.26] },
+    { "id": "kneeR",  "parent": "hipR",  "position": [0, 0, -0.27] },
+    { "id": "shinR",  "parent": "kneeR", "mesh": "cylinder", "material": "accent", "position": [0, 0, -0.12], "scale": [0.1, 0.1, 0.24] },
+    { "id": "ankleR", "parent": "kneeR", "position": [0, 0, -0.27] },
+    { "id": "footR",  "parent": "ankleR", "mesh": "roundbox", "bevel": 0.4, "material": "dark", "position": [0.05, 0, -0.03], "scale": [0.26, 0.15, 0.08] },
+
+    // Body
+    { "id": "body", "parent": "hips", "mesh": "roundbox", "bevel": 0.25, "material": "shell", "position": [0, 0, 0.3], "scale": [0.42, 0.55, 0.45] },
+    { "id": "belt", "parent": "hips", "mesh": "roundbox", "bevel": 0.3, "material": "accent", "position": [0, 0, 0.13], "scale": [0.44, 0.57, 0.08] },
+
+    // Arms hang from shoulder joints
+    { "id": "shoulderL", "parent": "hips", "position": [0, -0.34, 0.47] },
+    { "id": "armL",  "parent": "shoulderL", "mesh": "cylinder", "material": "accent", "position": [0, 0, -0.18], "scale": [0.1, 0.1, 0.34] },
+    { "id": "handL", "parent": "shoulderL", "mesh": "sphere", "material": "dark", "position": [0, 0, -0.4], "scale": 0.14 },
+    { "id": "shoulderR", "parent": "hips", "position": [0, 0.34, 0.47] },
+    { "id": "armR",  "parent": "shoulderR", "mesh": "cylinder", "material": "accent", "position": [0, 0, -0.18], "scale": [0.1, 0.1, 0.34] },
+    { "id": "handR", "parent": "shoulderR", "mesh": "sphere", "material": "dark", "position": [0, 0, -0.4], "scale": 0.14 },
+
+    // Head pivots at the neck
+    { "id": "neck",  "parent": "hips", "position": [0, 0, 0.55] },
+    { "id": "head",  "parent": "neck", "mesh": "roundbox", "bevel": 0.3, "material": "shell", "position": [0, 0, 0.2], "scale": [0.46, 0.56, 0.38] },
+    { "id": "visor", "parent": "neck", "mesh": "roundbox", "bevel": 0.4, "material": "dark", "position": [0.21, 0, 0.2], "scale": [0.06, 0.44, 0.24] },
+    { "id": "eyeL",  "parent": "neck", "mesh": "sphere", "material": "eye", "position": [0.245, -0.1, 0.22], "scale": 0.08, "shadow": false },
+    { "id": "eyeR",  "parent": "neck", "mesh": "sphere", "material": "eye", "position": [0.245, 0.1, 0.22], "scale": 0.08, "shadow": false },
+    { "id": "stick", "parent": "neck", "mesh": "cylinder", "material": "dark", "position": [0, 0, 0.47], "scale": [0.03, 0.03, 0.18], "shadow": false },
+    { "id": "tip",   "parent": "neck", "mesh": "sphere", "material": "bulb", "position": [0, 0, 0.58], "scale": 0.09, "shadow": false },
+
+    { "id": "ball", "mesh": "sphere", "pivot": "bottom", "color": "#ff7b5c", "position": [0.72, 0.13, 0], "scale": 0.2 },
+
+    { "id": "sun", "light": { "type": "directional", "intensity": 1.15, "color": "#fff3e2" }, "position": [3, 6, 7], "lookAt": [0, 0, 0] },
+    { "id": "cam", "camera": {}, "position": [-1.1, 1.6, 1.1], "lookAt": [-1.6, 0, 0.7] }
+  ],
+  "animations": [
+    // Walk in: a path moves the root and turns it along the way, the walk swings the joints.
+    // No foot sliding: travel about 4 x leg length (0.6) x sin(swing) per period, here 0.9 m per 1.1 s.
+    { "target": "bot.position", "path": { "points": [[-1.6, 0, 0], [0.4, 0, 0]], "start": 0, "duration": 3, "face": true } },
+    { "target": "bot", "walk": {
+        "legs": ["hipL", "hipR"], "knees": ["kneeL", "kneeR"], "feet": ["ankleL", "ankleR"], "arms": ["shoulderL", "shoulderR"],
+        "period": 1.1, "swing": 22, "kneeBend": 35, "armSwing": 20, "bob": 0.04, "start": 0, "end": 3 } },
+    // Tracking shot from the robot's right side: the camera trails it and keeps it framed
+    { "target": "cam.position", "follow": { "object": "bot", "offset": [0.5, 1.6, 1.1], "smoothing": 0.5 } },
+    { "target": "cam.lookAt", "follow": { "object": "bot", "offset": [0, 0, 0.7], "smoothing": 0.25 } },
+
+    // Turn toward the camera (+90 yaw faces +Y) for the wave, then back to face the ball
+    { "target": "bot.rotation.y", "keys": [[3.0, 0], [3.4, 70], [5.0, 70], [5.4, 0]] },
+
+    // Wave: raise the right arm out to the side (-roll) and wag it; tilt the head
+    { "target": "shoulderR.rotation.z", "keys": [[3.2, 0], [3.6, -150, "inOutSine"], [3.9, -125], [4.2, -150], [4.5, -125], [4.8, -150], [5.2, 0]], "ease": "inOutSine" },
+    { "target": "neck.rotation.z", "keys": [[3.3, 0], [3.7, 10], [4.8, 10], [5.2, 0]] },
+    { "target": "tip.scale", "keys": [[3.6, 0.09], [3.7, 0.14], [3.9, 0.09]], "period": 0.8 },
+
+    // Kick: wind up (knee back), snap the leg forward (+pitch), arms counter-swing
+    { "target": "hipR.rotation.x",  "keys": [[5.4, 0], [5.7, -20], [5.9, 70, "outCubic"], [6.4, 0]] },
+    { "target": "kneeR.rotation.x", "keys": [[5.4, 0], [5.7, -70], [5.85, 0], [6.4, 0]] },
+    { "target": "shoulderL.rotation.x", "keys": [[5.4, 0], [5.9, 35], [6.4, 0]] },
+    { "target": "shoulderR.rotation.x", "keys": [[5.4, 0], [5.9, -35], [6.4, 0]] },
+    // The ball flies off and hops away
+    { "target": "ball.position.x", "keys": [[5.82, 0.72], [7, 3.6]], "ease": "outQuad" },
+    { "target": "ball.position.z", "bounce": { "height": 0.5, "period": 0.5, "restitution": 0.6, "squash": 0.2, "start": 5.82 } },
+    { "target": "ball.rotation.x", "keys": [[5.82, 0], [7, -720]], "ease": "outQuad" }
+  ]
+}

@@ -1,9 +1,11 @@
 #include "SceneParser.h"
+#include "MeshShapes.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -23,7 +25,8 @@ int FOutputDesc::FrameCount() const
 namespace
 {
 
-const std::set<std::string> kBuiltinMeshes = { "cube", "sphere", "cylinder", "cone", "plane" };
+const std::set<std::string> kBuiltinMeshes = { "cube", "sphere", "cylinder", "cone", "plane", "torus", "ring", "gem", "roundbox", "lathe", "rock" };
+const char* kBuiltinList = "cube, sphere, cylinder, cone, plane, torus, ring, gem, roundbox, lathe, rock";
 
 size_t EditDistance(const std::string& a, const std::string& b)
 {
@@ -238,7 +241,8 @@ public:
     {
         if (!v.is_object()) { Error(path, "expected an object"); return; }
         CheckKeys(v, path, { "id", "mesh", "light", "camera", "material", "color", "position", "rotation",
-                             "scale", "parent", "lookAt", "shadow", "visible" });
+                             "scale", "parent", "lookAt", "shadow", "visible", "pivot", "detail", "flat",
+                             "thickness", "bevel", "profile", "seed" });
 
         if (!v.contains("id")) Error(path, "missing \"id\"");
         else String(v["id"], path + ".id", out.id);
@@ -263,7 +267,7 @@ public:
                     const std::filesystem::path p = baseDir / mesh;
                     const std::string ext = p.extension().string();
                     if (ext != ".glb" && ext != ".gltf")
-                        Error(path + ".mesh", "\"" + mesh + "\" is not a built-in mesh (cube, sphere, cylinder, cone, plane) or a .glb/.gltf file");
+                        Error(path + ".mesh", "\"" + mesh + "\" is not a built-in mesh (" + std::string(kBuiltinList) + ") or a .glb/.gltf file");
                     else if (!std::filesystem::exists(p))
                         Error(path + ".mesh", "file not found: " + p.string());
                     out.mesh = p.string();
@@ -312,6 +316,13 @@ public:
         if (out.kind != EObjectKind::Mesh && (v.contains("material") || v.contains("color") || v.contains("shadow")))
             Error(path, "\"material\", \"color\" and \"shadow\" only apply to mesh objects (lights use light.color, groups have no look)");
 
+        if (out.kind == EObjectKind::Mesh)
+            Shape(v, path, out);
+        else
+            for (const char* key : { "pivot", "detail", "flat", "thickness", "bevel", "profile", "seed" })
+                if (v.contains(key))
+                    Error(path + "." + key, "only applies to mesh objects");
+
         if (v.contains("position")) Vector(v["position"], path + ".position", out.position);
         if (v.contains("rotation")) Vector(v["rotation"], path + ".rotation", out.rotation);
         if (v.contains("scale"))    Scale(v["scale"], path + ".scale", out.scale);
@@ -321,6 +332,79 @@ public:
 
         out.shadow = out.kind == EObjectKind::Mesh && out.mesh != "plane";
         if (v.contains("shadow"))   Bool(v["shadow"], path + ".shadow", out.shadow);
+    }
+
+    // Pivot and the options of generated shapes
+    void Shape(const json& v, const std::string& path, FObjectDesc& out)
+    {
+        const std::string& mesh = out.mesh;
+        FShapeDesc& shape = out.shape;
+
+        if (v.contains("pivot"))
+        {
+            std::string pivot;
+            if (String(v["pivot"], path + ".pivot", pivot))
+            {
+                if (pivot == "center")      out.pivot = EPivot::Center;
+                else if (pivot == "bottom") out.pivot = EPivot::Bottom;
+                else if (pivot == "origin") out.pivot = EPivot::Origin;
+                else Error(path + ".pivot", "unknown \"" + pivot + "\" (expected center, bottom, origin)");
+            }
+        }
+
+        auto Only = [&](const char* key, std::initializer_list<const char*> shapes) -> bool
+        {
+            if (!v.contains(key))
+                return false;
+            for (const char* name : shapes)
+                if (mesh == name) return true;
+            std::string list;
+            for (const char* name : shapes) list += (list.empty() ? "" : ", ") + std::string(name);
+            Error(path + "." + key, "only applies to these meshes: " + list);
+            return false;
+        };
+
+        if (Only("flat", { "sphere", "cylinder", "cone", "torus", "ring", "roundbox", "lathe", "rock" }))
+        {
+            bool flat = false;
+            if (Bool(v["flat"], path + ".flat", flat)) shape.flat = flat;
+        }
+
+        if (Only("detail", { "sphere", "cylinder", "cone", "torus", "ring", "gem", "roundbox", "lathe", "rock" }))
+        {
+            // Sphere/rock: subdivision levels. Roundbox: segments per bevel. Others: segments around.
+            const bool levels = mesh == "sphere" || mesh == "rock";
+            Int(v["detail"], path + ".detail", shape.detail, levels ? 0 : (mesh == "roundbox" ? 1 : 3), levels ? (mesh == "rock" ? 4 : 5) : (mesh == "roundbox" ? 16 : 128));
+        }
+
+        if (Only("thickness", { "torus", "ring" }) && Number(v["thickness"], path + ".thickness", shape.thickness)
+            && (shape.thickness < 0.01 || shape.thickness > 0.9))
+            Error(path + ".thickness", "must be between 0.01 and 0.9 (tube diameter, the ring is 1 across)");
+
+        if (Only("bevel", { "roundbox" }) && Number(v["bevel"], path + ".bevel", shape.bevel)
+            && (shape.bevel < 0.0 || shape.bevel > 0.5))
+            Error(path + ".bevel", "must be between 0 and 0.5");
+
+        if (Only("seed", { "rock" }))
+            Int(v["seed"], path + ".seed", shape.seed, 0, 1000000);
+
+        if (mesh == "lathe" && !v.contains("profile"))
+            Error(path, "a lathe needs \"profile\": [[radius, z], ...] from bottom to top");
+        if (Only("profile", { "lathe" }))
+        {
+            const json& p = v["profile"];
+            if (!p.is_array() || p.size() < 2)
+                Error(path + ".profile", "expected at least two [radius, z] points");
+            else
+                for (size_t i = 0; i < p.size(); ++i)
+                {
+                    const std::string pointPath = path + ".profile[" + std::to_string(i) + "]";
+                    if (!p[i].is_array() || p[i].size() != 2 || !p[i][0].is_number() || !p[i][1].is_number() || p[i][0].get<double>() < 0.0)
+                        Error(pointPath, "expected [radius, z] with radius >= 0");
+                    else
+                        shape.profile.push_back({ p[i][0].get<double>(), p[i][1].get<double>() });
+                }
+        }
     }
 
     EEase Ease(const json& v, const std::string& path)
@@ -376,18 +460,24 @@ public:
     void Track(const json& v, const std::string& path, FTrackDesc& out, const std::map<std::string, const FObjectDesc*>& objects)
     {
         if (!v.is_object()) { Error(path, "expected an object"); return; }
-        CheckKeys(v, path, { "target", "keys", "ease", "spin", "wave", "orbit" });
+        CheckKeys(v, path, { "target", "keys", "ease", "repeat", "period", "spin", "wave", "orbit", "follow", "path", "bounce", "walk" });
 
         std::string target;
         if (!v.contains("target")) { Error(path, "missing \"target\" (like \"box.position\" or \"box.position.z\")"); return; }
         if (!String(v["target"], path + ".target", target)) return;
 
-        // "id.property" or "id.property.x"
+        // "id.property" or "id.property.x"; a walk targets the rig root by its id alone
         std::vector<std::string> parts;
         std::stringstream ss(target);
         for (std::string part; std::getline(ss, part, '.');) parts.push_back(part);
 
-        if (parts.size() < 2 || parts.size() > 3)
+        const bool walk = v.contains("walk");
+        if (walk && parts.size() != 1)
+        {
+            Error(path + ".target", "a walk targets the rig's root object by id alone, like \"bot\"");
+            return;
+        }
+        if (!walk && (parts.size() < 2 || parts.size() > 3))
         {
             Error(path + ".target", "expected \"id.property\" or \"id.property.x\", got \"" + target + "\"");
             return;
@@ -398,6 +488,15 @@ public:
         if (object == objects.end())
         {
             Error(path + ".target", "no object with id \"" + out.objectId + "\"");
+            return;
+        }
+
+        if (walk)
+        {
+            out.kind = ETrackKind::Walk;
+            for (const char* key : { "keys", "spin", "wave", "orbit", "follow", "path", "bounce" })
+                if (v.contains(key)) Error(path, "needs exactly one of \"keys\", \"spin\", \"wave\", \"orbit\", \"follow\", \"path\", \"bounce\" or \"walk\"");
+            Walk(v["walk"], path + ".walk", out, objects);
             return;
         }
 
@@ -442,12 +541,17 @@ public:
 
         const bool isVector = vectorProperty && out.component < 0;
 
-        const int generators = static_cast<int>(v.contains("keys")) + v.contains("spin") + v.contains("wave") + v.contains("orbit");
+        const int generators = static_cast<int>(v.contains("keys")) + v.contains("spin") + v.contains("wave") + v.contains("orbit")
+                             + v.contains("follow") + v.contains("path") + v.contains("bounce");
         if (generators != 1)
         {
-            Error(path, "needs exactly one of \"keys\", \"spin\", \"wave\" or \"orbit\"");
+            Error(path, "needs exactly one of \"keys\", \"spin\", \"wave\", \"orbit\", \"follow\", \"path\", \"bounce\" or \"walk\"");
             return;
         }
+        if ((v.contains("repeat") || v.contains("period")) && !v.contains("keys"))
+            Error(path, "\"repeat\" and \"period\" only apply to \"keys\" tracks");
+
+        const bool wholePosition = (out.property == EProperty::Position || out.property == EProperty::LookAt) && out.component < 0;
 
         EEase defaultEase = EEase::InOutCubic;
         if (v.contains("ease")) defaultEase = Ease(v["ease"], path + ".ease");
@@ -482,6 +586,23 @@ public:
                     Error(keyPath, "key times must not go backwards");
 
                 out.keys.push_back(key);
+            }
+
+            // Looping: "repeat": true plays the key range back to back, "period" sets the loop length
+            bool repeat = false;
+            if (v.contains("repeat")) Bool(v["repeat"], path + ".repeat", repeat);
+            const double span = out.keys.empty() ? 0.0 : out.keys.back().time - out.keys.front().time;
+            if (v.contains("period"))
+            {
+                if (Number(v["period"], path + ".period", out.repeatPeriod) && out.repeatPeriod < span - 1e-9)
+                    Error(path + ".period", std::format("must be at least the key range ({:g} s)", span));
+                if (v.contains("repeat") && !repeat)
+                    Error(path + ".repeat", "\"period\" repeats the keys, so \"repeat\": false contradicts it");
+            }
+            else if (repeat)
+            {
+                out.repeatPeriod = span;
+                if (span <= 0.0) Error(path + ".repeat", "needs keys at two or more different times");
             }
         }
         else if (v.contains("spin"))
@@ -534,6 +655,132 @@ public:
             if (o.contains("startAngle")) Number(o["startAngle"], path + ".orbit.startAngle", out.orbitStartAngle);
             if (out.orbitPeriod == 0.0) Error(path + ".orbit.period", "must not be 0");
         }
+        else if (v.contains("follow"))
+        {
+            out.kind = ETrackKind::Follow;
+            if (!wholePosition)
+                Error(path + ".target", "\"follow\" needs a whole \"position\" or \"lookAt\" target");
+
+            const json& f = v["follow"];
+            if (!f.is_object()) { Error(path + ".follow", "expected {\"object\", \"offset\", \"smoothing\"}"); return; }
+            CheckKeys(f, path + ".follow", { "object", "offset", "smoothing" });
+
+            if (!f.contains("object")) Error(path + ".follow", "missing \"object\" (the id to follow)");
+            else if (String(f["object"], path + ".follow.object", out.followId))
+            {
+                if (!objects.contains(out.followId)) Error(path + ".follow.object", "no object with id \"" + out.followId + "\"");
+                else if (out.followId == out.objectId) Error(path + ".follow.object", "an object can't follow itself");
+            }
+            if (f.contains("offset"))    Vector(f["offset"], path + ".follow.offset", out.followOffset);
+            if (f.contains("smoothing") && Number(f["smoothing"], path + ".follow.smoothing", out.followSmoothing)
+                && (out.followSmoothing < 0.0 || out.followSmoothing > 5.0))
+                Error(path + ".follow.smoothing", "must be between 0 (rigid) and 5 seconds");
+        }
+        else if (v.contains("path"))
+        {
+            out.kind = ETrackKind::Path;
+            if (out.property != EProperty::Position || out.component >= 0)
+                Error(path + ".target", "\"path\" needs a whole \"position\" target");
+
+            const json& p = v["path"];
+            if (!p.is_object()) { Error(path + ".path", "expected {\"points\": [[x, y, z], ...], ...}"); return; }
+            CheckKeys(p, path + ".path", { "points", "curve", "start", "duration", "loop", "face", "ease" });
+
+            if (!p.contains("points") || !p["points"].is_array())
+                Error(path + ".path.points", "expected [[x, y, z], ...]");
+            else
+                for (size_t i = 0; i < p["points"].size(); ++i)
+                {
+                    Vec3 point;
+                    if (Vector(p["points"][i], path + ".path.points[" + std::to_string(i) + "]", point))
+                        out.pathPoints.push_back(point);
+                }
+
+            if (p.contains("curve"))
+            {
+                std::string curve;
+                if (String(p["curve"], path + ".path.curve", curve))
+                {
+                    if (curve == "smooth")      out.pathCurve = ECurve::Smooth;
+                    else if (curve == "linear") out.pathCurve = ECurve::Linear;
+                    else if (curve == "bezier") out.pathCurve = ECurve::Bezier;
+                    else Error(path + ".path.curve", "unknown \"" + curve + "\" (expected smooth, linear, bezier)");
+                }
+            }
+            if (p.contains("start"))    Number(p["start"], path + ".path.start", out.pathStart);
+            if (p.contains("duration") && Number(p["duration"], path + ".path.duration", out.pathDuration) && out.pathDuration <= 0.0)
+                Error(path + ".path.duration", "must be more than 0");
+            if (p.contains("loop"))     Bool(p["loop"], path + ".path.loop", out.pathLoop);
+            if (p.contains("face"))     Bool(p["face"], path + ".path.face", out.pathFace);
+            if (p.contains("ease"))     out.pathEase = Ease(p["ease"], path + ".path.ease");
+
+            const size_t n = out.pathPoints.size();
+            if (n < 2)
+                Error(path + ".path.points", "needs at least 2 points");
+            else if (out.pathCurve == ECurve::Bezier && (out.pathLoop ? n % 3 != 0 : (n - 1) % 3 != 0))
+                Error(path + ".path.points", out.pathLoop
+                    ? "a looping bezier needs 3 points per segment: point, handle, handle, point, handle, handle, ..."
+                    : "a bezier needs 3n + 1 points: point, handle, handle, point, ...");
+        }
+        else if (v.contains("bounce"))
+        {
+            out.kind = ETrackKind::Bounce;
+            if (out.property != EProperty::Position || out.component != 2)
+                Error(path + ".target", "\"bounce\" needs a \"position.z\" target");
+
+            const json& b = v["bounce"];
+            if (!b.is_object()) { Error(path + ".bounce", "expected {\"height\", \"period\", ...}"); return; }
+            CheckKeys(b, path + ".bounce", { "height", "period", "restitution", "squash", "start" });
+
+            if (b.contains("height"))      Number(b["height"], path + ".bounce.height", out.bounceHeight);
+            if (b.contains("period"))      Number(b["period"], path + ".bounce.period", out.bouncePeriod);
+            if (b.contains("restitution")) Number(b["restitution"], path + ".bounce.restitution", out.bounceRestitution);
+            if (b.contains("squash"))      Number(b["squash"], path + ".bounce.squash", out.bounceSquash);
+            if (b.contains("start"))       Number(b["start"], path + ".bounce.start", out.bounceStart);
+            if (out.bouncePeriod <= 0.0) Error(path + ".bounce.period", "must be more than 0");
+            if (out.bounceRestitution <= 0.0 || out.bounceRestitution > 1.0) Error(path + ".bounce.restitution", "must be more than 0 and at most 1");
+            if (out.bounceSquash < 0.0 || out.bounceSquash > 0.6) Error(path + ".bounce.squash", "must be between 0 and 0.6");
+        }
+    }
+
+    void Walk(const json& w, const std::string& path, FTrackDesc& out, const std::map<std::string, const FObjectDesc*>& objects)
+    {
+        if (!w.is_object()) { Error(path, "expected {\"legs\": [\"hipL\", \"hipR\"], ...}"); return; }
+        CheckKeys(w, path, { "legs", "knees", "feet", "arms", "period", "swing", "kneeBend", "armSwing", "bob", "start", "end" });
+
+        // Joint pairs, left then right
+        auto Pair = [&](const char* key, std::array<std::string, 2>& joints)
+        {
+            if (!w.contains(key)) return;
+            const json& j = w[key];
+            const std::string jointPath = path + "." + key;
+            if (!j.is_array() || j.size() != 2 || !j[0].is_string() || !j[1].is_string())
+            {
+                Error(jointPath, "expected [\"left id\", \"right id\"]");
+                return;
+            }
+            for (int i = 0; i < 2; ++i)
+            {
+                joints[i] = j[i].get<std::string>();
+                if (!objects.contains(joints[i])) Error(jointPath, "no object with id \"" + joints[i] + "\"");
+            }
+        };
+        Pair("legs", out.walkLegs);
+        Pair("knees", out.walkKnees);
+        Pair("feet", out.walkFeet);
+        Pair("arms", out.walkArms);
+        if (out.walkLegs[0].empty() && out.walkArms[0].empty())
+            Error(path, "needs \"legs\" and/or \"arms\" (pairs of joint ids, left then right)");
+
+        if (w.contains("period"))   Number(w["period"], path + ".period", out.walkPeriod);
+        if (w.contains("swing"))    Number(w["swing"], path + ".swing", out.walkSwing);
+        if (w.contains("kneeBend")) Number(w["kneeBend"], path + ".kneeBend", out.walkKneeBend);
+        if (w.contains("armSwing")) Number(w["armSwing"], path + ".armSwing", out.walkArmSwing);
+        if (w.contains("bob"))      Number(w["bob"], path + ".bob", out.walkBob);
+        if (w.contains("start"))    Number(w["start"], path + ".start", out.walkStart);
+        if (w.contains("end"))      Number(w["end"], path + ".end", out.walkEnd);
+        if (out.walkPeriod <= 0.0) Error(path + ".period", "must be more than 0");
+        if (out.walkEnd >= 0.0 && out.walkEnd <= out.walkStart) Error(path + ".end", "must be after \"start\"");
     }
 
     void Environment(const json& v, const std::string& path, FEnvironmentDesc& out)

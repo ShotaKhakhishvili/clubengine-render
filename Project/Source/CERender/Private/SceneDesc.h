@@ -74,6 +74,20 @@ struct FLookAt
 
 enum class EObjectKind { Mesh, Light, Camera, Group };
 
+// Where a mesh's origin sits. Default: centered for built-ins, as authored for glTF files and lathe profiles.
+enum class EPivot { Default, Center, Bottom, Origin };
+
+// Options for generated shapes (see MeshShapes.h)
+struct FShapeDesc
+{
+    int detail = -1;                // -1 = the shape's default
+    std::optional<bool> flat;       // faceted: one normal per triangle (unset = the shape's default)
+    double thickness = -1.0;        // torus/ring tube diameter, -1 = default
+    double bevel = 0.15;            // roundbox edge radius
+    int seed = 1;                   // rock
+    std::vector<std::array<double, 2>> profile; // lathe: [radius, z] points
+};
+
 struct FObjectDesc
 {
     std::string id;
@@ -85,6 +99,8 @@ struct FObjectDesc
     std::string materialName;       // empty = inline material or the mesh's own materials
     std::optional<FMaterialDesc> inlineMaterial;
     bool shadow = true;
+    EPivot pivot = EPivot::Default;
+    FShapeDesc shape;
 
     FLightDesc light;
 
@@ -115,7 +131,9 @@ struct FKey
     EEase ease = EEase::InOutCubic; // easing of the segment that starts at this key
 };
 
-enum class ETrackKind { Keys, Spin, Wave, Orbit };
+enum class ETrackKind { Keys, Spin, Wave, Orbit, Follow, Path, Bounce, Walk };
+
+enum class ECurve { Smooth, Linear, Bezier };
 
 struct FTrackDesc
 {
@@ -125,6 +143,7 @@ struct FTrackDesc
     ETrackKind kind = ETrackKind::Keys;
 
     std::vector<FKey> keys;
+    double repeatPeriod = 0.0;      // > 0: the key range repeats every this many seconds
 
     Vec3 spinRate{};                // degrees per second, added to rotation
 
@@ -139,6 +158,37 @@ struct FTrackDesc
     double orbitHeight = 2.0;
     double orbitPeriod = 8.0;       // seconds per turn, negative = clockwise
     double orbitStartAngle = 0.0;   // degrees
+
+    // follow: the target's world position (smoothed) plus an offset
+    std::string followId;
+    Vec3 followOffset{};
+    double followSmoothing = 0.0;   // seconds of lag
+
+    // path: travel through points at constant speed
+    std::vector<Vec3> pathPoints;
+    ECurve pathCurve = ECurve::Smooth;
+    double pathStart = 0.0;
+    double pathDuration = -1.0;     // -1 = until the end of the clip
+    bool pathLoop = false;
+    bool pathFace = false;          // turn (yaw) along the direction of travel
+    EEase pathEase = EEase::Linear;
+
+    // bounce: hops added to position.z
+    double bounceHeight = 1.0;
+    double bouncePeriod = 1.0;
+    double bounceRestitution = 1.0; // < 1: each hop is lower and shorter until it rests
+    double bounceSquash = 0.0;
+    double bounceStart = 0.0;       // time of the first ground contact
+
+    // walk: limb swing on named joints, plus a bob on the target (the rig root)
+    std::array<std::string, 2> walkLegs, walkKnees, walkFeet, walkArms;
+    double walkPeriod = 1.0;        // seconds per full stride (left + right step)
+    double walkSwing = 25.0;        // degrees
+    double walkKneeBend = 40.0;
+    double walkArmSwing = 20.0;
+    double walkBob = 0.03;
+    double walkStart = 0.0;
+    double walkEnd = -1.0;          // -1 = until the end of the clip
 };
 
 struct FSceneDesc
