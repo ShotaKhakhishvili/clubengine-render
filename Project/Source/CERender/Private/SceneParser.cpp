@@ -27,6 +27,7 @@ namespace
 
 const std::set<std::string> kBuiltinMeshes = { "cube", "sphere", "cylinder", "cone", "plane", "torus", "ring", "gem", "roundbox", "lathe", "rock" };
 const char* kBuiltinList = "cube, sphere, cylinder, cone, plane, torus, ring, gem, roundbox, lathe, rock";
+constexpr int kMaxEmitterInstances = 20000;
 
 size_t EditDistance(const std::string& a, const std::string& b)
 {
@@ -242,7 +243,7 @@ public:
         if (!v.is_object()) { Error(path, "expected an object"); return; }
         CheckKeys(v, path, { "id", "mesh", "light", "camera", "material", "color", "position", "rotation",
                              "scale", "parent", "lookAt", "shadow", "visible", "pivot", "detail", "flat",
-                             "thickness", "bevel", "profile", "seed" });
+                             "thickness", "bevel", "profile", "seed", "emitter" });
 
         if (!v.contains("id")) Error(path, "missing \"id\"");
         else String(v["id"], path + ".id", out.id);
@@ -303,20 +304,48 @@ public:
             }
         }
 
+        // An emitter is a mesh object whose mesh is used for many instances
+        if (v.contains("emitter"))
+        {
+            if (out.kind != EObjectKind::Mesh || !v.contains("mesh"))
+                Error(path + ".emitter", "an emitter needs a \"mesh\" for its instances");
+            else
+            {
+                out.kind = EObjectKind::Emitter;
+                Emitter(v["emitter"], path + ".emitter", out.emitter);
+            }
+        }
+
+        const bool hasMesh = out.kind == EObjectKind::Mesh || out.kind == EObjectKind::Emitter;
+
         if (v.contains("color"))
         {
             // Shortcut: a color on top of the named/inline material (or the default one)
             FMaterialDesc m = out.inlineMaterial.value_or(
                 materials.contains(out.materialName) ? materials.at(out.materialName) : FMaterialDesc{});
-            Color(v["color"], path + ".color", m.color);
+
+            // Emitters can take a list to pick from, one color per instance
+            const json& c = v["color"];
+            if (c.is_array() && !c.empty() && (c[0].is_string() || c[0].is_array()))
+            {
+                if (out.kind != EObjectKind::Emitter)
+                    Error(path + ".color", "a list of colors only works on emitters; give one color");
+                for (size_t i = 0; i < c.size(); ++i)
+                    if (Vec3 color; Color(c[i], path + ".color[" + std::to_string(i) + "]", color))
+                        out.emitter.palette.push_back(color);
+                if (!out.emitter.palette.empty())
+                    m.color = out.emitter.palette[0];
+            }
+            else
+                Color(c, path + ".color", m.color);
             out.inlineMaterial = m;
             out.materialName.clear();
         }
 
-        if (out.kind != EObjectKind::Mesh && (v.contains("material") || v.contains("color") || v.contains("shadow")))
+        if (!hasMesh && (v.contains("material") || v.contains("color") || v.contains("shadow")))
             Error(path, "\"material\", \"color\" and \"shadow\" only apply to mesh objects (lights use light.color, groups have no look)");
 
-        if (out.kind == EObjectKind::Mesh)
+        if (hasMesh)
             Shape(v, path, out);
         else
             for (const char* key : { "pivot", "detail", "flat", "thickness", "bevel", "profile", "seed" })
@@ -330,8 +359,192 @@ public:
         if (v.contains("lookAt"))   LookAt(v["lookAt"], path + ".lookAt", out.lookAt);
         if (v.contains("visible"))  Bool(v["visible"], path + ".visible", out.visible);
 
+        // Emitter instances cast no shadows unless asked: hundreds of copies cost a lot and rarely read well
         out.shadow = out.kind == EObjectKind::Mesh && out.mesh != "plane";
         if (v.contains("shadow"))   Bool(v["shadow"], path + ".shadow", out.shadow);
+    }
+
+    void Emitter(const json& v, const std::string& path, FEmitterDesc& out)
+    {
+        if (!v.is_object()) { Error(path, "expected {\"count\", \"area\", ...}"); return; }
+        CheckKeys(v, path, { "count", "area", "size", "scale", "rotation", "motion", "loop", "minGap", "avoid", "seed" });
+
+        if (!v.contains("count")) Error(path, "missing \"count\"");
+        else Int(v["count"], path + ".count", out.count, 1, kMaxEmitterInstances);
+
+        if (!v.contains("area")) Error(path, "missing \"area\": {\"min\": [x, y, z], \"max\": [x, y, z]} or {\"center\": [x, y, z], \"radius\": r}");
+        else Area(v["area"], path + ".area", out.area);
+
+        if (v.contains("size"))
+        {
+            const json& s = v["size"];
+            if (s.is_number())
+                out.sizeMin = out.sizeMax = s.get<double>();
+            else if (s.is_array() && s.size() == 2 && s[0].is_number() && s[1].is_number())
+            {
+                out.sizeMin = s[0].get<double>();
+                out.sizeMax = s[1].get<double>();
+            }
+            else
+                Error(path + ".size", "expected a number or [min, max]");
+            if (out.sizeMin <= 0.0 || out.sizeMax < out.sizeMin)
+                Error(path + ".size", "needs 0 < min <= max");
+        }
+
+        if (v.contains("scale")) Scale(v["scale"], path + ".scale", out.scale);
+
+        if (v.contains("rotation"))
+        {
+            const json& r = v["rotation"];
+            if (r.is_string())
+            {
+                const std::string mode = r.get<std::string>();
+                if (mode == "random")   out.rotation = EEmitterRotation::Random;
+                else if (mode == "yaw") out.rotation = EEmitterRotation::Yaw;
+                else Error(path + ".rotation", "unknown \"" + mode + "\" (expected \"random\", \"yaw\" or [pitch, yaw, roll])");
+            }
+            else
+                Vector(r, path + ".rotation", out.fixedRotation);
+        }
+
+        if (v.contains("seed")) Int(v["seed"], path + ".seed", out.seed, 0, 1000000);
+
+        if (v.contains("motion"))
+        {
+            out.moving = true;
+            const json& m = v["motion"];
+            const std::string motionPath = path + ".motion";
+            if (!m.is_object()) { Error(motionPath, "expected {\"fall\", \"drift\", \"sway\", \"spin\"}"); return; }
+            CheckKeys(m, motionPath, { "fall", "drift", "sway", "spin" });
+
+            double fall = 0.0;
+            if (m.contains("fall"))  Number(m["fall"], motionPath + ".fall", fall);
+            if (m.contains("drift")) Vector(m["drift"], motionPath + ".drift", out.velocity);
+            out.velocity.z -= fall;
+
+            if (m.contains("sway"))
+            {
+                const json& s = m["sway"];
+                if (!s.is_object()) Error(motionPath + ".sway", "expected {\"amplitude\", \"period\"}");
+                else
+                {
+                    CheckKeys(s, motionPath + ".sway", { "amplitude", "period" });
+                    if (!s.contains("amplitude")) Error(motionPath + ".sway", "missing \"amplitude\"");
+                    else Number(s["amplitude"], motionPath + ".sway.amplitude", out.swayAmplitude);
+                    if (s.contains("period") && Number(s["period"], motionPath + ".sway.period", out.swayPeriod) && out.swayPeriod <= 0.0)
+                        Error(motionPath + ".sway.period", "must be more than 0");
+                }
+            }
+
+            if (m.contains("spin"))
+            {
+                const json& s = m["spin"];
+                if (s.is_number())
+                    out.spinMin = out.spinMax = s.get<double>();
+                else if (s.is_array() && s.size() == 2 && s[0].is_number() && s[1].is_number())
+                {
+                    out.spinMin = s[0].get<double>();
+                    out.spinMax = s[1].get<double>();
+                }
+                else
+                    Error(motionPath + ".spin", "expected degrees per second, or [min, max]");
+                if (out.spinMin < 0.0 || out.spinMax < out.spinMin)
+                    Error(motionPath + ".spin", "needs 0 <= min <= max (the direction is random)");
+            }
+
+            if (v.contains("loop")) Bool(v["loop"], path + ".loop", out.loop);
+
+            // A loop needs room to travel through
+            const Vec3& vel = out.velocity;
+            if (out.loop && std::abs(vel.z) > 1e-9 && out.area.Height() <= 0.0)
+                Error(path + ".area", "falling or rising instances loop through the area's height, so it needs one ("
+                      + std::string(out.area.disc ? "\"height\"" : "max z above min z") + "), or set \"loop\": false");
+        }
+        else if (v.contains("loop"))
+            Error(path + ".loop", "only applies with \"motion\"");
+
+        if (v.contains("minGap") && Number(v["minGap"], path + ".minGap", out.minGap) && out.minGap < 0.0)
+            Error(path + ".minGap", "must be 0 or more");
+
+        if (v.contains("avoid"))
+        {
+            const json& a = v["avoid"];
+            if (!a.is_array()) Error(path + ".avoid", "expected [{\"center\": [x, y], \"radius\": r} or {\"min\": [x, y], \"max\": [x, y]}, ...]");
+            else
+                for (size_t i = 0; i < a.size(); ++i)
+                {
+                    FAvoidDesc region;
+                    if (AvoidRegion(a[i], path + ".avoid[" + std::to_string(i) + "]", region))
+                        out.avoid.push_back(region);
+                }
+        }
+
+        if (out.moving && (v.contains("minGap") || v.contains("avoid")))
+            Error(path, "\"minGap\" and \"avoid\" only apply to static scatter (no \"motion\")");
+    }
+
+    void Area(const json& v, const std::string& path, FAreaDesc& out)
+    {
+        if (!v.is_object()) { Error(path, "expected {\"min\", \"max\"} (a box) or {\"center\", \"radius\"} (a disc)"); return; }
+        CheckKeys(v, path, { "min", "max", "center", "radius", "inner", "height" });
+
+        const bool box = v.contains("min") || v.contains("max");
+        const bool disc = v.contains("center") || v.contains("radius") || v.contains("inner") || v.contains("height");
+        if (box == disc)
+        {
+            Error(path, box ? "mixes a box (\"min\", \"max\") with a disc (\"center\", \"radius\", \"inner\", \"height\"); use one"
+                            : "expected {\"min\", \"max\"} (a box) or {\"center\", \"radius\"} (a disc)");
+            return;
+        }
+
+        if (box)
+        {
+            if (!v.contains("min") || !v.contains("max")) { Error(path, "a box needs both \"min\" and \"max\""); return; }
+            if (Vector(v["min"], path + ".min", out.min) && Vector(v["max"], path + ".max", out.max)
+                && (out.max.x < out.min.x || out.max.y < out.min.y || out.max.z < out.min.z))
+                Error(path, "\"max\" must be at least \"min\" on every axis");
+            return;
+        }
+
+        out.disc = true;
+        if (v.contains("center")) Vector(v["center"], path + ".center", out.center);
+        if (!v.contains("radius")) Error(path, "a disc needs \"radius\"");
+        else if (Number(v["radius"], path + ".radius", out.radius) && out.radius <= 0.0)
+            Error(path + ".radius", "must be more than 0");
+        if (v.contains("inner") && Number(v["inner"], path + ".inner", out.inner) && (out.inner < 0.0 || out.inner >= out.radius))
+            Error(path + ".inner", "must be at least 0 and less than \"radius\"");
+        if (v.contains("height") && Number(v["height"], path + ".height", out.height) && out.height < 0.0)
+            Error(path + ".height", "must be 0 or more");
+    }
+
+    bool AvoidRegion(const json& v, const std::string& path, FAvoidDesc& out)
+    {
+        if (!v.is_object()) { Error(path, "expected {\"center\": [x, y], \"radius\": r} or {\"min\": [x, y], \"max\": [x, y]}"); return false; }
+        CheckKeys(v, path, { "center", "radius", "min", "max" });
+
+        // Avoid regions are horizontal: [x, y] (a z is allowed and ignored)
+        auto Point = [&](const char* key, Vec3& point)
+        {
+            const json& p = v[key];
+            if (!p.is_array() || p.size() < 2 || p.size() > 3 || !p[0].is_number() || !p[1].is_number() || (p.size() == 3 && !p[2].is_number()))
+            {
+                Error(path + "." + key, "expected [x, y]");
+                return false;
+            }
+            point = Vec3{ p[0].get<double>(), p[1].get<double>(), 0.0 };
+            return true;
+        };
+
+        if (v.contains("radius") || v.contains("center"))
+        {
+            if (v.contains("min") || v.contains("max")) { Error(path, "is either a circle (\"center\", \"radius\") or a box (\"min\", \"max\")"); return false; }
+            if (!v.contains("center") || !v.contains("radius")) { Error(path, "a circle needs \"center\" and \"radius\""); return false; }
+            out.circle = true;
+            return Point("center", out.center) && Number(v["radius"], path + ".radius", out.radius);
+        }
+        if (!v.contains("min") || !v.contains("max")) { Error(path, "a box needs \"min\" and \"max\""); return false; }
+        out.circle = false;
+        return Point("min", out.min) && Point("max", out.max);
     }
 
     // Pivot and the options of generated shapes
@@ -521,6 +734,8 @@ public:
             Error(path + ".target", "\"intensity\" only applies to lights");
         if (out.property == EProperty::Color && (kind == EObjectKind::Camera || kind == EObjectKind::Group))
             Error(path + ".target", "only meshes and lights have a color");
+        if (out.property == EProperty::Color && kind == EObjectKind::Emitter)
+            Error(path + ".target", "emitter instances keep their colors (animate position, rotation, scale or visible to move the whole emitter)");
 
         const bool vectorProperty = out.property == EProperty::Position || out.property == EProperty::Rotation
                                  || out.property == EProperty::Scale || out.property == EProperty::LookAt
@@ -570,17 +785,27 @@ public:
             {
                 const std::string keyPath = path + ".keys[" + std::to_string(i) + "]";
                 const json& k = keys[i];
-                if (!k.is_array() || k.size() < 2 || k.size() > 3)
+                // Compact form for vector values: [time, x, y, z] instead of [time, [x, y, z]]
+                const bool compact = isVector && k.is_array() && k.size() >= 4 && k[1].is_number();
+                const size_t size = compact ? k.size() - 2 : k.size();
+                if (isVector && k.is_array() && k.size() == 3 && k[1].is_number() && k[2].is_number())
                 {
-                    Error(keyPath, "expected [time, value] or [time, value, \"ease\"]");
+                    Error(keyPath, "expected [time, x, y, z] (three numbers after the time)");
+                    continue;
+                }
+                if (!k.is_array() || size < 2 || size > 3)
+                {
+                    Error(keyPath, isVector ? "expected [time, [x, y, z]], [time, x, y, z] or either with an \"ease\" at the end"
+                                            : "expected [time, value] or [time, value, \"ease\"]");
                     continue;
                 }
 
                 FKey key;
                 key.ease = defaultEase;
                 if (!Number(k[0], keyPath + "[0]", key.time)) continue;
-                if (!Value(k[1], keyPath + "[1]", isVector, out.property, key.value)) continue;
-                if (k.size() == 3) key.ease = Ease(k[2], keyPath + "[2]");
+                const json value = compact ? json::array({ k[1], k[2], k[3] }) : k[1];
+                if (!Value(value, compact ? keyPath : keyPath + "[1]", isVector, out.property, key.value)) continue;
+                if (k.size() == (compact ? 5u : 3u)) key.ease = Ease(k.back(), keyPath + "[" + std::to_string(k.size() - 1) + "]");
 
                 if (!out.keys.empty() && key.time < out.keys.back().time)
                     Error(keyPath, "key times must not go backwards");
@@ -679,8 +904,8 @@ public:
         else if (v.contains("path"))
         {
             out.kind = ETrackKind::Path;
-            if (out.property != EProperty::Position || out.component >= 0)
-                Error(path + ".target", "\"path\" needs a whole \"position\" target");
+            if (!wholePosition)
+                Error(path + ".target", "\"path\" needs a whole \"position\" or \"lookAt\" target");
 
             const json& p = v["path"];
             if (!p.is_object()) { Error(path + ".path", "expected {\"points\": [[x, y, z], ...], ...}"); return; }
@@ -711,7 +936,8 @@ public:
             if (p.contains("duration") && Number(p["duration"], path + ".path.duration", out.pathDuration) && out.pathDuration <= 0.0)
                 Error(path + ".path.duration", "must be more than 0");
             if (p.contains("loop"))     Bool(p["loop"], path + ".path.loop", out.pathLoop);
-            if (p.contains("face"))     Bool(p["face"], path + ".path.face", out.pathFace);
+            if (p.contains("face") && Bool(p["face"], path + ".path.face", out.pathFace) && out.pathFace && out.property == EProperty::LookAt)
+                Error(path + ".path.face", "only applies to a \"position\" path");
             if (p.contains("ease"))     out.pathEase = Ease(p["ease"], path + ".path.ease");
 
             const size_t n = out.pathPoints.size();
@@ -864,7 +1090,7 @@ private:
 
 }
 
-bool SceneParser::Parse(const std::filesystem::path& file, FSceneDesc& outScene)
+bool SceneParser::Parse(const std::filesystem::path& file, FSceneDesc& outScene, const std::filesystem::path& baseDir)
 {
     errors.clear();
 
@@ -886,7 +1112,7 @@ bool SceneParser::Parse(const std::filesystem::path& file, FSceneDesc& outScene)
         return false;
     }
 
-    Reader r(errors, file.parent_path());
+    Reader r(errors, baseDir.empty() ? file.parent_path() : baseDir);
 
     if (!root.is_object())
     {

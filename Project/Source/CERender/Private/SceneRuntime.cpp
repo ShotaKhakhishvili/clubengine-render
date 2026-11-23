@@ -26,6 +26,7 @@
 #include <cmath>
 #include <format>
 #include <functional>
+#include <iostream>
 #include <limits>
 
 using namespace CE;
@@ -61,6 +62,18 @@ FRotator RotatorToward(const Vec3& from, const Vec3& to, double roll)
     const double yaw = std::atan2(d.y, d.x) * 180.0 / kPi;
     const double pitch = std::atan2(d.z, horizontal) * 180.0 / kPi;
     return FRotator{ pitch, yaw, roll };
+}
+
+// The pivot moves the mesh under its root, so scale and rotation happen around the pivot
+Vec3 PivotOffset(const FObjectDesc& desc, const Vec3& boundsMin, const Vec3& boundsMax)
+{
+    EPivot pivot = desc.pivot;
+    if (pivot == EPivot::Default)
+        pivot = desc.meshIsBuiltin && desc.mesh != "lathe" ? EPivot::Center : EPivot::Origin;
+    const Vec3 center = (boundsMin + boundsMax) * 0.5;
+    if (pivot == EPivot::Center) return center * -1.0;
+    if (pivot == EPivot::Bottom) return Vec3{ -center.x, -center.y, -boundsMin.z };
+    return Vec3{};
 }
 
 // Bounds of everything a glTF file draws, in the space the engine imports it to
@@ -217,14 +230,8 @@ bool SceneRuntime::Build(UWorld& inWorld, const FSceneDesc& inScene, std::vector
             object.boundsMin = loaded.boundsMin;
             object.boundsMax = loaded.boundsMax;
 
-            // The pivot moves the mesh under a plain root, so scale and rotation happen around the pivot
-            EPivot pivot = desc.pivot;
-            if (pivot == EPivot::Default)
-                pivot = desc.meshIsBuiltin && desc.mesh != "lathe" ? EPivot::Center : EPivot::Origin;
-            const Vec3 center = (loaded.boundsMin + loaded.boundsMax) * 0.5;
-            Vec3 offset{};
-            if (pivot == EPivot::Center) offset = center * -1.0;
-            if (pivot == EPivot::Bottom) offset = Vec3{ -center.x, -center.y, -loaded.boundsMin.z };
+            // The pivot moves the mesh under a plain root
+            const Vec3 offset = PivotOffset(desc, loaded.boundsMin, loaded.boundsMax);
 
             auto* actor = world->SpawnActor<AStaticMeshActor>(identity);
             object.mesh = actor->GetStaticMeshComponent();
@@ -261,19 +268,14 @@ bool SceneRuntime::Build(UWorld& inWorld, const FSceneDesc& inScene, std::vector
                     object.mesh->SetMaterial(slot, object.material);
             }
             else
-            {
-                for (const TObjectHandle<UMaterial>& handle : meshAsset->GetMaterials())
-                {
-                    if (UMaterial* material = assets.Resolve(handle))
-                    {
-                        material->SetShader(shader);
-                        material->SetInt("u_Mode", kModeLit);
-                        ApplyEnvironment(*material);
-                    }
-                }
-            }
+                UseOwnMaterials(*meshAsset);
             break;
         }
+        case EObjectKind::Emitter:
+            object.actor = world->SpawnActor<AActor>(identity);   // the emitter's frame; instances hang below it
+            object.root = object.actor->GetRootComponent();
+            BuildEmitter(static_cast<size_t>(&object - objects.data()), errors);
+            break;
         case EObjectKind::Light:
         {
             const FLightDesc& l = desc.light;
@@ -435,6 +437,114 @@ SceneRuntime::FMesh SceneRuntime::LoadMesh(const FObjectDesc& desc)
     return meshCache[key] = out;
 }
 
+// Imported meshes without a material of ours keep their glTF materials, switched to our shader
+void SceneRuntime::UseOwnMaterials(UStaticMesh& mesh)
+{
+    AssetRegistry& assets = GetAssetRegistry();
+    for (const TObjectHandle<UMaterial>& handle : mesh.GetMaterials())
+    {
+        if (UMaterial* material = assets.Resolve(handle))
+        {
+            material->SetShader(shader);
+            material->SetInt("u_Mode", kModeLit);
+            ApplyEnvironment(*material);
+        }
+    }
+}
+
+void SceneRuntime::BuildEmitter(size_t index, std::vector<std::string>& errors)
+{
+    FRuntimeObject& object = objects[index];
+    const FObjectDesc& desc = *object.desc;
+    AssetRegistry& assets = GetAssetRegistry();
+
+    const FMesh loaded = LoadMesh(desc);
+    UStaticMesh* meshAsset = assets.Resolve(loaded.handle);
+    if (!meshAsset)
+    {
+        errors.push_back("objects \"" + desc.id + "\": failed to load mesh " + desc.mesh);
+        return;
+    }
+
+    FEmitterRuntime emitter;
+    emitter.object = index;
+    emitter.field = std::make_unique<EmitterField>(desc.emitter);
+    emitter.pivotOffset = PivotOffset(desc, loaded.boundsMin, loaded.boundsMax);
+
+    const size_t placed = emitter.field->GetInstances().size();
+    if (placed < static_cast<size_t>(desc.emitter.count))
+        std::cerr << std::format("CERENDER: note: emitter \"{}\" placed {} of {} instances (minGap/avoid leave no room for more)\n",
+                                 desc.id, placed, desc.emitter.count);
+
+    // One material per palette color, shared by every instance of that color
+    std::vector<TObjectHandle<UMaterial>> materials;
+    const bool ownMaterial = desc.meshIsBuiltin || desc.inlineMaterial || !desc.materialName.empty();
+    if (ownMaterial)
+    {
+        FMaterialDesc m = desc.inlineMaterial ? *desc.inlineMaterial
+                        : (!desc.materialName.empty() ? scene->materials.at(desc.materialName) : FMaterialDesc{});
+        if (desc.emitter.palette.empty())
+            materials.push_back(MakeMaterial(m, kModeLit));
+        for (const Vec3& color : desc.emitter.palette)
+        {
+            m.color = color;
+            materials.push_back(MakeMaterial(m, kModeLit));
+        }
+    }
+    else
+        UseOwnMaterials(*meshAsset);
+
+    const uint32 slots = std::max<uint32>(1, static_cast<uint32>(meshAsset->GetSubMeshes().size()));
+    const FTransform identity;
+    for (const EmitterField::FInstance& instance : emitter.field->GetInstances())
+    {
+        UStaticMeshComponent* mesh = world->SpawnActor<AStaticMeshActor>(identity)->GetStaticMeshComponent();
+        mesh->SetStaticMesh(loaded.handle);
+        if (ownMaterial)
+            for (uint32 slot = 0; slot < slots; ++slot)
+                mesh->SetMaterial(slot, materials[instance.color]);
+        mesh->SetParentComponent(object.root);
+        emitter.meshes.push_back(mesh);
+
+        if (desc.shadow && ground)
+        {
+            UStaticMeshComponent* shadowMesh = SpawnMeshActor(loaded.handle, shadowMaterial);
+            for (uint32 slot = 0; slot < slots; ++slot)
+                shadowMesh->SetMaterial(slot, shadowMaterial);
+            shadowMesh->SetParentComponent(object.root);
+            emitter.shadows.push_back(shadowMesh);
+        }
+    }
+
+    // Static instances are placed once, here
+    UpdateEmitter(emitter, 0.0, true);
+    object.emitter = static_cast<int>(emitters.size());
+    emitters.push_back(std::move(emitter));
+}
+
+void SceneRuntime::UpdateEmitter(FEmitterRuntime& emitter, double time, bool placeAll)
+{
+    const bool visible = objects[emitter.object].current.visible;
+    if (visible != emitter.visible || placeAll)
+    {
+        emitter.visible = visible;
+        for (UStaticMeshComponent* mesh : emitter.meshes) mesh->SetVisible(visible);
+        for (UStaticMeshComponent* mesh : emitter.shadows) mesh->SetVisible(visible);
+    }
+    if (!visible || !(placeAll || objects[emitter.object].desc->emitter.moving))
+        return;
+
+    const auto& instances = emitter.field->GetInstances();
+    for (size_t i = 0; i < instances.size(); ++i)
+    {
+        FTransform transform = emitter.field->Evaluate(instances[i], time);
+        transform.Translation += transform.Rotation * (transform.Scale * emitter.pivotOffset);
+        emitter.meshes[i]->SetRelativeTransform(transform);
+        if (!emitter.shadows.empty())
+            emitter.shadows[i]->SetRelativeTransform(transform);
+    }
+}
+
 UStaticMeshComponent* SceneRuntime::SpawnMeshActor(TObjectHandle<UStaticMesh> mesh, TObjectHandle<UMaterial> material)
 {
     auto* actor = world->SpawnActor<AStaticMeshActor>(FTransform{});
@@ -497,11 +607,6 @@ void SceneRuntime::ApplyTrack(size_t index, double time)
         ApplyWalk(track, time);
         return;
     }
-    if (track.kind == ETrackKind::Path)
-    {
-        ApplyPath(index, time, state);
-        return;
-    }
     if (track.kind == ETrackKind::Bounce)
     {
         ApplyBounce(track, time, state);
@@ -529,6 +634,9 @@ void SceneRuntime::ApplyTrack(size_t index, double time)
 
     switch (track.kind)
     {
+    case ETrackKind::Path:
+        ApplyPath(index, time, *vec, track.pathFace ? &state.rotation : nullptr);
+        break;
     case ETrackKind::Keys:
     {
         // A keyed track only takes over from its first key on, so tracks for later beats can follow earlier ones
@@ -623,7 +731,7 @@ Vec3 SceneRuntime::SampleFollow(const FTrackDesc& track, double time)
     return sum * (1.0 / weights);
 }
 
-void SceneRuntime::ApplyPath(size_t index, double time, FState& state)
+void SceneRuntime::ApplyPath(size_t index, double time, Vec3& point, Vec3* faceRotation)
 {
     const FTrackDesc& track = scene->tracks[index];
     const FPathCache& cache = pathCaches[index];
@@ -641,16 +749,16 @@ void SceneRuntime::ApplyPath(size_t index, double time, FState& state)
     const size_t hi = std::clamp<size_t>(std::lower_bound(cache.distance.begin(), cache.distance.end(), target) - cache.distance.begin(), 1, cache.points.size() - 1);
     const double span = cache.distance[hi] - cache.distance[hi - 1];
     const double t = span > 0.0 ? (target - cache.distance[hi - 1]) / span : 0.0;
-    state.position = Lerp(cache.points[hi - 1], cache.points[hi], t);
+    point = Lerp(cache.points[hi - 1], cache.points[hi], t);
 
-    if (track.pathFace)
+    if (faceRotation)
     {
         // Turn toward the direction of travel; the object's own yaw is added, to correct models that don't face +X
         Vec3 d = cache.points[hi] - cache.points[hi - 1];
         for (size_t k = hi; std::abs(d.x) + std::abs(d.y) < 1e-9 && k + 1 < cache.points.size(); ++k)
             d = cache.points[k + 1] - cache.points[k];
         if (std::abs(d.x) + std::abs(d.y) > 1e-9)
-            state.rotation.y += std::atan2(d.y, d.x) * 180.0 / kPi;
+            faceRotation->y += std::atan2(d.y, d.x) * 180.0 / kPi;
     }
 }
 
@@ -806,6 +914,9 @@ void SceneRuntime::Evaluate(double time)
             object.light->SetIntensity(static_cast<float>(std::max(0.0, s.intensity)));
         }
     }
+
+    for (FEmitterRuntime& emitter : emitters)
+        UpdateEmitter(emitter, time, false);
 
     UpdateContactShadows();
 

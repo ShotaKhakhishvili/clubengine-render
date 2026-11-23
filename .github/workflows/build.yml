@@ -36,11 +36,14 @@ jobs:
         env:
           CERENDER_HOME: dist/clubengine-render-linux-x64
         run: |
-          for scene in plugin/skills/render-scene/examples/*.json; do
-            python3 plugin/scripts/cerender.py render "$scene" --preview --out "out/$(basename "$scene" .json)"
+          for scene in plugin/skills/render-scene/examples/*.json plugin/skills/render-scene/examples/*.py; do
+            name=$(basename "$scene"); name="${name%.*}"
+            python3 plugin/scripts/cerender.py render "$scene" --preview --out "out/$name"
           done
           test -f out/hello/frame_0000.png
           test -f out/robot/contact_sheet.png
+          test -f out/petals/contact_sheet.png
+          test -f out/village/contact_sheet.png
 
       - uses: actions/upload-artifact@v4
         with:

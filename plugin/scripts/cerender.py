@@ -2,6 +2,7 @@
 """clubengine-render launcher: JSON scene in, PNG frames (and optionally MP4/GIF) out.
 
     python cerender.py render scene.json --preview                 # 6 labeled moments on a contact sheet
+    python cerender.py render scene.py --preview                   # a script that prints the scene JSON (see cerender_lib.py)
     python cerender.py render scene.json --times 1.2,1.5,2         # just these moments (seconds)
     python cerender.py render scene.json --range 3.5-5 --step 0.1  # every 0.1 s from 3.5 to 5
     python cerender.py render scene.json --frame 42                # one full-quality frame
@@ -140,6 +141,35 @@ def linux_wrapper() -> list[str]:
         fail("no display found and xvfb-run isn't installed.\n"
              "  Install it (Debian/Ubuntu: sudo apt-get install -y xvfb libgl1-mesa-dri libgl1 libx11-6 libxrandr2 libxinerama1 libxcursor1 libxi6) and run again.")
     return [xvfb, "-a", "-s", "-screen 0 1280x720x24"]
+
+
+def run_scene_script(script: Path) -> Path:
+    """Runs a .py scene with this Python and returns a temp file holding the JSON it printed.
+    cerender_lib (next to this file) is importable from the script; it runs in its own folder."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parent) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env["PYTHONIOENCODING"] = "utf-8"
+    result = subprocess.run([sys.executable, str(script)], cwd=script.parent, env=env,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode != 0:
+        print(f"error: {script.name} failed (exit code {result.returncode}):", file=sys.stderr)
+        print(result.stderr.rstrip() or "  (no error output)", file=sys.stderr)
+        sys.exit(1)
+    if result.stderr.strip():
+        print(result.stderr.rstrip(), file=sys.stderr)  # the script's own messages
+
+    text = result.stdout.strip()
+    try:
+        json.loads(text)
+    except json.JSONDecodeError as e:
+        start = text[:160] + ("..." if len(text) > 160 else "")
+        fail(f"{script.name} must print only the scene JSON to stdout (print anything else to stderr): {e}\n"
+             f"  it printed: {start!r}")
+
+    handle, name = tempfile.mkstemp(prefix=f"{script.stem}-", suffix=".json")
+    with os.fdopen(handle, "w", encoding="utf-8") as out:
+        out.write(text)
+    return Path(name)
 
 
 def strip_comments(text: str) -> str:
@@ -341,7 +371,7 @@ def parse_moments(args: argparse.Namespace, duration: float) -> list[float]:
 
 
 def run_renderer(home: Path, scene: Path, out_dir: Path, width: int, height: int, fps: int,
-                 supersample: int, count: int, extra: list[str]) -> None:
+                 supersample: int, count: int, extra: list[str], source: Path) -> None:
     engine_out = out_dir / ".engine"
     command = linux_wrapper() + [
         str(home / "bin" / exe_name()),
@@ -371,6 +401,8 @@ def run_renderer(home: Path, scene: Path, out_dir: Path, width: int, height: int
     lines = (result.stdout + result.stderr).splitlines()
     ours = [line for line in lines if line.startswith("CERENDER") or line.startswith("  - ")]
     for line in ours:
+        if source != scene:
+            line = line.replace(str(scene), f"the JSON printed by {source.name}")
         print(line.replace("CERENDER ERROR: ", "error: ").replace("CERENDER: ", ""))
 
     if result.returncode != 0:
@@ -389,13 +421,25 @@ def run_renderer(home: Path, scene: Path, out_dir: Path, width: int, height: int
 
 
 def render(args: argparse.Namespace) -> int:
-    scene = Path(args.scene).expanduser().resolve()
-    if not scene.exists():
-        fail(f"scene file not found: {scene}")
+    source = Path(args.scene).expanduser().resolve()
+    if not source.exists():
+        fail(f"scene file not found: {source}")
+    if source.suffix.lower() != ".py":
+        return render_scene(args, source, source)
 
+    # A .py scene prints its JSON; it's rendered from a temp file, so nothing big lands in the user's folder
+    scene = run_scene_script(source)
+    try:
+        return render_scene(args, source, scene)
+    finally:
+        scene.unlink(missing_ok=True)
+
+
+def render_scene(args: argparse.Namespace, source: Path, scene: Path) -> int:
+    """source is what the user gave (outputs are named after it), scene the JSON file to render."""
     # --out is the frames folder, or the video file when it ends in .mp4/.gif
     video_out = None
-    out_dir = scene.parent / "renders" / scene.stem
+    out_dir = source.parent / "renders" / source.stem
     if args.out:
         target = Path(args.out).expanduser().resolve()
         if target.suffix.lower() in (".mp4", ".gif"):
@@ -453,7 +497,7 @@ def render(args: argparse.Namespace) -> int:
         times = []
 
     home = runtime_dir()
-    extra = []
+    extra = ["--base-dir", str(source.parent)]
     if times:
         extra += ["--times", ",".join(f"{t:.6g}" for t in times)]
     sheet = bool(times) and quick
@@ -464,10 +508,10 @@ def render(args: argparse.Namespace) -> int:
     mp4 = gif = None
     if want_video:
         if args.gif:
-            gif = video_out.with_suffix(".gif") if video_out else out_dir / f"{scene.stem}.gif"
+            gif = video_out.with_suffix(".gif") if video_out else out_dir / f"{source.stem}.gif"
         if args.mp4:
-            mp4 = video_out.with_suffix(".mp4") if video_out else out_dir / f"{scene.stem}.mp4"
-        encode_to = mp4 or out_dir / f".{scene.stem}.tmp.mp4"
+            mp4 = video_out.with_suffix(".mp4") if video_out else out_dir / f"{source.stem}.mp4"
+        encode_to = mp4 or out_dir / f".{source.stem}.tmp.mp4"
         extra += ["--video", str(encode_to), "--ffmpeg", str(ffmpeg), "--vcodec", codec]
         if not args.keep_frames:
             extra.append("--no-frames")
@@ -480,7 +524,7 @@ def render(args: argparse.Namespace) -> int:
         (out_dir / "contact_sheet.png").unlink(missing_ok=True)
 
     started = time.time()
-    run_renderer(home, scene, out_dir, width, height, fps, supersample, len(times) or frames, extra)
+    run_renderer(home, scene, out_dir, width, height, fps, supersample, len(times) or frames, extra, source)
     elapsed = time.time() - started
 
     quality = " (2x supersampled)" if supersample > 1 else ""
@@ -519,7 +563,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     r = sub.add_parser("render", help="render a scene file")
-    r.add_argument("scene", help="path to the scene .json")
+    r.add_argument("scene", help="path to the scene .json, or a .py script that prints it")
     r.add_argument("--out", help="frames folder (default: renders/<scene name>/ next to the scene), "
                                  "or the video file if it ends in .mp4/.gif")
     r.add_argument("--preview", action="store_true", help="fast check: 6 labeled moments on a contact sheet, half size")

@@ -72,7 +72,7 @@ struct FLookAt
     bool IsSet() const { return point.has_value() || !objectId.empty(); }
 };
 
-enum class EObjectKind { Mesh, Light, Camera, Group };
+enum class EObjectKind { Mesh, Light, Camera, Group, Emitter };
 
 // Where a mesh's origin sits. Default: centered for built-ins, as authored for glTF files and lathe profiles.
 enum class EPivot { Default, Center, Bottom, Origin };
@@ -88,12 +88,62 @@ struct FShapeDesc
     std::vector<std::array<double, 2>> profile; // lathe: [radius, z] points
 };
 
+// Where emitter instances live, in the emitter's own space: a box, or a disc/ring around a point
+struct FAreaDesc
+{
+    bool disc = false;
+    Vec3 min{}, max{};              // box
+    Vec3 center{};                  // disc: center of its base
+    double radius = 1.0;
+    double inner = 0.0;             // > 0 makes a ring
+    double height = 0.0;            // disc: extends this far up from the center
+
+    Vec3 Lowest() const { return disc ? center : min; }
+    double Height() const { return disc ? height : max.z - min.z; }
+};
+
+// A horizontal region that static scatter keeps clear: a circle, or a box
+struct FAvoidDesc
+{
+    bool circle = true;
+    Vec3 center{};
+    double radius = 0.0;
+    Vec3 min{}, max{};
+};
+
+enum class EEmitterRotation { Fixed, Yaw, Random };
+
+// Expands one mesh object into many instances (see Emitter.h)
+struct FEmitterDesc
+{
+    int count = 100;
+    FAreaDesc area;
+    std::vector<Vec3> palette;      // one color per instance, picked at random; empty = the object's material
+    double sizeMin = 1.0, sizeMax = 1.0;
+    Vec3 scale{1.0, 1.0, 1.0};      // per instance, before size
+    EEmitterRotation rotation = EEmitterRotation::Fixed;
+    Vec3 fixedRotation{};
+    int seed = 1;
+
+    // Motion (none = static scatter)
+    bool moving = false;
+    Vec3 velocity{};                // drift with the fall subtracted from z
+    double swayAmplitude = 0.0;
+    double swayPeriod = 2.0;
+    double spinMin = 0.0, spinMax = 0.0; // degrees per second, around a random axis
+    bool loop = true;               // re-enter at the far side of the area; false: settle at its bottom (or top)
+
+    // Static scatter
+    double minGap = 0.0;            // horizontal distance between instance centers
+    std::vector<FAvoidDesc> avoid;
+};
+
 struct FObjectDesc
 {
     std::string id;
     EObjectKind kind = EObjectKind::Mesh;
 
-    // Mesh
+    // Mesh (and emitter instances)
     std::string mesh;               // builtin name or file path (resolved by the parser)
     bool meshIsBuiltin = true;
     std::string materialName;       // empty = inline material or the mesh's own materials
@@ -101,6 +151,7 @@ struct FObjectDesc
     bool shadow = true;
     EPivot pivot = EPivot::Default;
     FShapeDesc shape;
+    FEmitterDesc emitter;
 
     FLightDesc light;
 

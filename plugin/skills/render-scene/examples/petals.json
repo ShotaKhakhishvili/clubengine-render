@@ -1,0 +1,58 @@
+{
+  // Cherry blossom: petals falling around a low-poly tree, grass and stones scattered on the ground (6 s).
+  // Shows emitters: falling particles that loop, and static scatter with minGap and avoid. No baked motion.
+  "version": 1,
+  "output": { "width": 1080, "height": 1350, "fps": 30, "duration": 6 },
+  "environment": {
+    "sky": ["#ffc9dc", "#fff1ea", "#f3dccb"],
+    "ground": "#e3cdb6",
+    "ambient": 0.5,
+    "fog": { "start": 12, "end": 40 }
+  },
+  "materials": {
+    "bark":    { "color": "#6e4b3e", "roughness": 0.9 },
+    "blossom": { "color": "#f6b3c8", "roughness": 0.7 },
+    "stone":   { "color": "#c2b4a8", "roughness": 0.85 },
+    "petal":   { "color": "#f9c5d3", "roughness": 0.6, "emissive": 0.35 }
+  },
+  "objects": [
+    // The tree: a trunk, two branches and blossom clumps
+    { "id": "tree", "position": [0, 0, 0] },
+    { "id": "trunk",   "parent": "tree", "mesh": "cylinder", "detail": 7, "flat": true, "material": "bark", "pivot": "bottom", "scale": [0.32, 0.32, 1.9] },
+    { "id": "branchL", "parent": "tree", "mesh": "cylinder", "detail": 6, "flat": true, "material": "bark", "pivot": "bottom", "position": [0, 0, 1.5], "rotation": [0, 0, 40],  "scale": [0.16, 0.16, 1.1] },
+    { "id": "branchR", "parent": "tree", "mesh": "cylinder", "detail": 6, "flat": true, "material": "bark", "pivot": "bottom", "position": [0, 0, 1.4], "rotation": [-35, 0, -30], "scale": [0.16, 0.16, 1.0] },
+    { "id": "crown1", "parent": "tree", "mesh": "sphere", "detail": 1, "flat": true, "material": "blossom", "position": [0, 0, 2.55],      "scale": [2.1, 2.1, 1.6] },
+    { "id": "crown2", "parent": "tree", "mesh": "sphere", "detail": 1, "flat": true, "material": "blossom", "position": [0.1, -0.95, 2.3], "scale": [1.4, 1.4, 1.15] },
+    { "id": "crown3", "parent": "tree", "mesh": "sphere", "detail": 1, "flat": true, "material": "blossom", "position": [-0.7, 0.8, 2.25], "scale": [1.3, 1.3, 1.1] },
+
+    // Falling petals: closed-form motion, so any frame renders on its own. They loop through the area's height.
+    // A little emissive keeps them pink against the bright sky. "color" picks one of the list per petal.
+    { "id": "petals", "mesh": "sphere", "detail": 1, "material": "petal", "color": ["#f9c5d3", "#f4a6bc", "#fde3ea", "#f7b9c9"],
+      "emitter": { "count": 300, "area": { "min": [-4.5, -4.5, 0], "max": [4.5, 4.5, 4.2] },
+                   "size": [0.07, 0.11], "scale": [1, 0.7, 0.18], "rotation": "random",
+                   "motion": { "fall": 0.45, "drift": [0.25, 0.15, 0], "sway": { "amplitude": 0.3, "period": 2.4 }, "spin": [60, 240] },
+                   "seed": 7 } },
+
+    // Petals already on the ground: static scatter, lying flat with a random turn
+    { "id": "fallen", "mesh": "sphere", "detail": 1, "color": ["#f9c5d3", "#f4a6bc", "#fde3ea"],
+      "emitter": { "count": 260, "area": { "center": [0, 0, 0.015], "radius": 2.8, "inner": 0.3 },
+                   "size": [0.1, 0.15], "scale": [1, 0.7, 0.2], "rotation": "yaw", "seed": 11 } },
+
+    // Grass tufts kept clear of the trunk, the stones and each other
+    { "id": "grass", "mesh": "cone", "detail": 4, "flat": true, "pivot": "bottom", "color": ["#9cc47a", "#86b46a", "#b1d18c"],
+      "emitter": { "count": 1400, "area": { "center": [0, 0, 0], "radius": 9 },
+                   "size": [0.8, 1.4], "scale": [0.07, 0.07, 0.26], "rotation": "yaw", "minGap": 0.14,
+                   "avoid": [{ "center": [0, 0], "radius": 0.6 }, { "center": [2.2, -1.2], "radius": 0.5 }, { "center": [-1.6, -2.3], "radius": 0.4 }],
+                   "seed": 3 } },
+
+    { "id": "stone1", "mesh": "rock", "seed": 4, "material": "stone", "pivot": "bottom", "position": [2.2, -1.2, 0], "rotation": [0, 30, 0], "scale": [0.6, 0.5, 0.35] },
+    { "id": "stone2", "mesh": "rock", "seed": 9, "material": "stone", "pivot": "bottom", "position": [-1.6, -2.3, 0], "rotation": [0, 80, 0], "scale": [0.45, 0.4, 0.3] },
+
+    { "id": "sun", "light": { "type": "directional", "intensity": 1.1, "color": "#fff1e6" }, "position": [4, -5, 7], "lookAt": [0, 0, 0] },
+    { "id": "cam", "camera": {}, "lookAt": [0, 0, 1.55] }
+  ],
+  "animations": [
+    // A slow quarter turn around the tree
+    { "target": "cam.position", "orbit": { "center": [0, 0, 0], "radius": 3.9, "height": 1.15, "period": 24, "startAngle": -60 } }
+  ]
+}

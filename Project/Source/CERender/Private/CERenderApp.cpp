@@ -6,6 +6,7 @@
 // --sheet-only skips the frame PNGs: with --times every moment goes on the contact sheet, labeled with its time.
 // --video <file.mp4> --ffmpeg <exe> --vcodec "<ffmpeg codec args>" streams the frames into ffmpeg as they render;
 // --no-frames then skips the PNGs (the contact sheet is still written).
+// --base-dir <dir> resolves mesh paths from there instead of the scene file's folder (for generated scenes).
 //
 // The engine's offline loop drives the frames. This app moves the scene to each frame's time,
 // reads the rendered image back and writes it (downsampled when supersampling).
@@ -64,7 +65,7 @@ private:
         bool sheetOnly = false;
         int sizeOverrideW = 0, sizeOverrideH = 0;
         std::string times, vcodec;
-        std::filesystem::path ffmpeg, video;
+        std::filesystem::path ffmpeg, video, baseDir;
         bool noFrames = false;
 
         const auto& args = CommandLine::GetArgs();
@@ -79,6 +80,7 @@ private:
             else if (args[i] == "--ffmpeg" && i + 1 < args.size())     ffmpeg = args[++i];
             else if (args[i] == "--vcodec" && i + 1 < args.size())     vcodec = args[++i];
             else if (args[i] == "--no-frames")                         noFrames = true;
+            else if (args[i] == "--base-dir" && i + 1 < args.size())   baseDir = args[++i];
             else if (!args[i].empty() && args[i][0] != '-' && scenePath.empty()) scenePath = args[i];
         }
 
@@ -89,7 +91,7 @@ private:
         }
 
         CER::SceneParser parser;
-        if (!parser.Parse(scenePath, scene))
+        if (!parser.Parse(scenePath, scene, baseDir))
         {
             std::cerr << "CERENDER ERROR: " << parser.GetErrors().size() << " problem(s) in " << scenePath.string() << "\n";
             for (const auto& e : parser.GetErrors())

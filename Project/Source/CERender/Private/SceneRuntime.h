@@ -1,10 +1,12 @@
 #pragma once
 
+#include "Emitter.h"
 #include "SceneDesc.h"
 
 #include <CoreUObject/TObjectHandle.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -53,6 +55,18 @@ private:
         CE::UStaticMeshComponent* shadowMesh = nullptr; // copy of the mesh, flattened onto the ground by the shader
         size_t rootIndex = 0;                          // top of the parent chain; one contact shadow per root
         Vec3 boundsMin, boundsMax;                     // mesh bounds in the mesh's own space
+        int emitter = -1;                              // index into emitters
+    };
+
+    // An emitter's instances: plain mesh components under the emitter's root, placed by its field
+    struct FEmitterRuntime
+    {
+        size_t object = 0;
+        std::unique_ptr<EmitterField> field;
+        std::vector<CE::UStaticMeshComponent*> meshes;  // one per instance
+        std::vector<CE::UStaticMeshComponent*> shadows; // one per instance, when they cast shadows
+        Vec3 pivotOffset;
+        bool visible = true;
     };
 
     struct FMesh
@@ -72,11 +86,14 @@ private:
     void ApplyEnvironment(CE::UMaterial& material) const;
     FMesh LoadMesh(const FObjectDesc& desc);
     CE::UStaticMeshComponent* SpawnMeshActor(CE::TObjectHandle<CE::UStaticMesh> mesh, CE::TObjectHandle<CE::UMaterial> material);
+    void UseOwnMaterials(CE::UStaticMesh& mesh);
+    void BuildEmitter(size_t index, std::vector<std::string>& errors);
+    void UpdateEmitter(FEmitterRuntime& emitter, double time, bool placeAll);
 
     void Pose(double time, bool withFollow);
     void ApplyTrack(size_t index, double time);
     Vec3 SampleFollow(const FTrackDesc& track, double time);
-    void ApplyPath(size_t index, double time, FState& state);
+    void ApplyPath(size_t index, double time, Vec3& point, Vec3* faceRotation);
     void ApplyBounce(const FTrackDesc& track, double time, FState& state);
     void ApplyWalk(const FTrackDesc& track, double time);
     void UpdateContactShadows();
@@ -91,6 +108,7 @@ private:
     std::map<std::string, FMesh> meshCache;
     std::vector<FPathCache> pathCaches;               // per track, filled for path tracks
     std::vector<Vec3> followValues;                    // per track, the smoothed target of follow tracks
+    std::vector<FEmitterRuntime> emitters;
 
     CE::UStaticMeshComponent* sky = nullptr;
     CE::UStaticMeshComponent* ground = nullptr;

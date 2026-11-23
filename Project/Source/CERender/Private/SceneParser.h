@@ -14,7 +14,8 @@ namespace CER
 class SceneParser
 {
 public:
-    bool Parse(const std::filesystem::path& file, FSceneDesc& outScene);
+    // Mesh paths resolve relative to baseDir, or to the file's folder when it's empty
+    bool Parse(const std::filesystem::path& file, FSceneDesc& outScene, const std::filesystem::path& baseDir = {});
 
     const std::vector<std::string>& GetErrors() const { return errors; }
 

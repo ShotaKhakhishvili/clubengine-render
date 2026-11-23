@@ -1,11 +1,11 @@
 ---
 name: render-scene
-description: Render 3D images and short animated clips from a JSON scene with the ClubEngine renderer. Use when the user wants a 3D render, a looping 3D animation, a product turntable, or a small animated 3D story (Instagram/LinkedIn-style clips), built from simple shapes or glTF models.
+description: Render 3D images and short animated clips from a JSON scene (or a Python script that prints one) with the ClubEngine renderer. Use when the user wants a 3D render, a looping 3D animation, a product turntable, particles like falling petals or snow, or a small animated 3D story (Instagram/LinkedIn-style clips), built from simple shapes or glTF models.
 ---
 
 # Render scenes with ClubEngine
 
-You describe a scene in one JSON file; a real engine renders it to PNG frames, MP4 or GIF. You look at the result and iterate.
+You describe a scene in one JSON file (or a short Python script that prints it); a real engine renders it to PNG frames, MP4 or GIF. You look at the result and iterate.
 
 **Read `${CLAUDE_PLUGIN_ROOT}/skills/render-scene/reference.md` before writing your first scene.** It has every key, the orientation cheat sheet (which rotation sign moves a limb where, which screen side +X/+Y land on) and the gotchas. Start from the closest example in `${CLAUDE_PLUGIN_ROOT}/skills/render-scene/examples/`:
 
@@ -16,12 +16,22 @@ You describe a scene in one JSON file; a real engine renders it to PNG frames, M
 - `robot.json`: a character from primitives with groups as joints: pop in, hop, wave, spin
 - `character.json`: **character template**: robot rig with hips, knees, feet and arms; ready-made walk, wave and kick; tracking camera
 - `textured.json`: glTF models with a texture (`assets/crate.gltf`)
+- `petals.json`: **emitters**: falling cherry petals that loop, plus grass and fallen petals scattered with `minGap` and `avoid`
+- `village.py`: **Python scene** with `cerender_lib`: houses built at `scatter()` spots, a pine emitter that avoids them, snowfall, a `look_along` fly-through
+
+## JSON or a Python script?
+
+- **Write JSON directly** for small scenes: a character, a product shot, a few dozen objects, hand-placed beats.
+- **Write a `.py` script** with `cerender_lib` when there are many objects, scattered placement or anything procedural (a village, a forest of different trees, objects along a curve). It prints the scene; `cerender.py` renders a `.py` exactly like a `.json`. The API is in reference.md, "Python scenes".
+- **Particles and identical scattered copies are emitters**, in either form: petals, snow, rain, sparks, bubbles, grass, pebbles, a field of identical trees. One emitter object replaces hundreds of objects and every baked key. Don't write per-particle objects or bake their motion.
+- Prefer engine motion over computed keys: `repeat`/`period`, `wave`, `path`/`look_along`, `follow`, `walk`, `bounce`, emitter `motion`. Bake (`cerender_lib.bake`) only what none of them covers.
+- **Never read or open generated JSON** (the output of a `.py` scene, or a big file a script wrote). It's huge and tells you less than the script. Errors point to JSON paths like `objects[12].emitter.count`: find the code that made that object and fix the script.
 
 ## Workflow
 
 Use `python3` if `python` isn't found. The first run downloads the renderer (~3 MB) once.
 
-1. **Write the scene** to a `.json` file in the user's working folder.
+1. **Write the scene** to a `.json` file (or a `.py` script, see above) in the user's working folder.
 2. **Preview**: 6 moments of the clip on a small contact sheet, each tile labeled with its time:
    ```bash
    python "${CLAUDE_PLUGIN_ROOT}/scripts/cerender.py" render scene.json --preview
@@ -39,7 +49,7 @@ Use `python3` if `python` isn't found. The first run downloads the renderer (~3 
    Add `--gif` for a GIF, `--out path/clip.mp4` to choose where the video goes. Final renders are 2× supersampled and stream straight into the MP4 (no PNG frames unless you add `--keep-frames`); the contact sheet is still written. ffmpeg is found or fetched **before** rendering (PATH, `--ffmpeg PATH`, `CERENDER_FFMPEG`, else a one-time download into the renderer's cache). If that fails the script stops with a one-line install command: give it to the user; don't try to install ffmpeg some other way.
 5. **Report** the full file paths it printed (`mp4:`, `gif:`, `image:`). Don't paste frames into the reply beyond one look you needed.
 
-If the renderer prints errors, it lists all of them with JSON paths. Fix them all, then rerun.
+If the renderer prints errors, it lists all of them with JSON paths. Fix them all, then rerun. For a `.py` scene a failing script shows its Python traceback instead.
 
 ## Getting good-looking results
 
@@ -48,6 +58,7 @@ If the renderer prints errors, it lists all of them with JSON paths. Fix them al
 - **Light:** one directional `sun` from the side and above (e.g. `[5, -6, 7]` with `lookAt` the subject) gives readable shapes and a visible ground shadow. From behind the camera it flattens everything.
 - **Palette:** 3–5 harmonious colors. For a seamless studio backdrop copy `studio.json`'s environment; for a diorama use a contrasting ground.
 - **Shapes:** beyond cube/sphere/cylinder/cone: `roundbox` (soft edges), `torus`/`ring`, `gem`, `rock`, `lathe` (vases, cups, bottles from a profile), and `"flat": true` for a faceted low-poly look.
+- **Particles and scatter:** an emitter (`"emitter": {...}` on a mesh object) for anything there are many identical copies of. Give moving ones a palette (`"color": [...]`), `sway` and `spin` so they don't look mechanical; a little `emissive` keeps small particles readable against a bright sky.
 - **Motion:** ease everything (`inOutCubic`, `outBack` for pop-ins). Use the helpers instead of hand-keying: `bounce` (hops with squash), `path` (travel with `face`), `follow` (camera tracking), `walk` (leg/arm cycle), `"repeat"`/`"period"` for looping keys. Loops: full spin/orbit periods that divide the duration.
 - **Characters:** start from `character.json`. Joints are groups (objects with no mesh); parts hang below them. Squash the root, not one part.
 - **Clip length:** 3–8 s at 30 fps. Portrait 1080×1350 works for Instagram and LinkedIn feeds.

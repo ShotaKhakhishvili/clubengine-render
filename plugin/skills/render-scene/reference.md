@@ -1,6 +1,6 @@
-# Scene file reference (version 1, renderer 0.2)
+# Scene file reference (version 1, renderer 0.3)
 
-One JSON file describes everything. Comments (`//`) are allowed. Unknown keys are errors, with a "did you mean" hint.
+One JSON file describes everything. Comments (`//`) are allowed. Unknown keys are errors, with a "did you mean" hint. Big or procedural scenes can be a Python script that prints this JSON instead: see [Python scenes](#python-scenes-py).
 
 ```jsonc
 {
@@ -76,7 +76,7 @@ The ground is endless (it fades into the horizon). Every mesh casts a **shadow o
 
 ## objects
 
-Every object has an `id` and at most one of `mesh`, `light` or `camera`. Shared keys:
+Every object has an `id` and at most one of `mesh`, `light` or `camera` (a mesh object with an `emitter` block becomes many instances, see [Emitters](#emitters)). Shared keys:
 
 | key | default | notes |
 |---|---|---|
@@ -165,6 +165,47 @@ Lights point along their forward axis, so aim them with `lookAt` (or `rotation`)
 
 Exactly one object with `"camera": {}`. Aim it with `lookAt`. The field of view is fixed at **90° vertical**, which is wide: to fill most of the frame with an object of height `h`, keep the camera about `0.8 × h` to `1.2 × h` away from it. A camera slightly above the subject looking down 15–30° looks best.
 
+### Emitters
+
+A mesh object with an `emitter` block becomes many instances of its mesh: falling petals, snow, sparks, bubbles (with `motion`), or grass, stones, a crowd of trees (static scatter, without `motion`). It knows nothing about what it emits; those are just parameters. Use it instead of writing hundreds of objects or baking motion.
+
+```json
+{ "id": "petals", "mesh": "sphere", "detail": 1, "color": ["#f9c5d3", "#f4a6bc", "#fde3ea"],
+  "emitter": { "count": 300, "area": { "min": [-5, -5, 0], "max": [5, 5, 4] },
+               "size": [0.07, 0.11], "scale": [1, 0.7, 0.18], "rotation": "random",
+               "motion": { "fall": 0.45, "drift": [0.25, 0.15, 0], "sway": { "amplitude": 0.3, "period": 2.4 }, "spin": [60, 240] },
+               "seed": 7 } },
+{ "id": "grass", "mesh": "cone", "detail": 4, "flat": true, "pivot": "bottom", "color": ["#9cc47a", "#86b46a"],
+  "emitter": { "count": 1400, "area": { "center": [0, 0, 0], "radius": 9 }, "size": [0.8, 1.4], "scale": [0.07, 0.07, 0.26],
+               "rotation": "yaw", "minGap": 0.14, "avoid": [{ "center": [0, 0], "radius": 0.6 }] } }
+```
+
+The object keeps its usual mesh keys: `mesh` (any built-in shape or a glTF file), shape options (`detail`, `flat`, `bevel`, ...), `pivot`, `material`. `color` can be **a list**: each instance picks one at random. Its `position`, `rotation`, `scale` and `parent` place the **whole emitter** (the area is in its own space), and tracks on its `position`, `rotation`, `scale` and `visible` move or hide all instances together; instances keep their colors. Instances cast **no shadows** unless `"shadow": true`.
+
+| `emitter` key | default | notes |
+|---|---|---|
+| `count` | required | instances, 1–20000 |
+| `area` | required | where they are: a box `{ "min": [x, y, z], "max": [x, y, z] }`, or a disc `{ "center": [x, y, z], "radius": r }` with optional `inner` (a ring) and `height` (a cylinder going up from `center`). A flat area (min z = max z, or no height) puts every instance at that height |
+| `size` | 1 | uniform scale per instance: a number, or `[min, max]` for a random size in between |
+| `scale` | 1 | per-instance scale `[x, y, z]` before `size`: `[1, 0.7, 0.18]` flattens a sphere into a petal |
+| `rotation` | `[0, 0, 0]` | `"random"` (any orientation), `"yaw"` (random turn around Z, stays upright: grass, rocks, trees) or a fixed `[pitch, yaw, roll]` |
+| `seed` | 1 | the same seed always gives the same instances; change it for a different arrangement |
+| `motion` | none | makes them move (below). Without it the instances are a static scatter |
+| `loop` | true | with `motion`: an instance leaving the area re-enters at the far side, so the area stays full for the whole clip. `false`: falling ones settle at the bottom of the area and stop there (rising ones at the top) |
+| `minGap` | 0 | static only: horizontal distance kept between instance centers. If there is no room left, fewer are placed and the render prints a note |
+| `avoid` | none | static only: horizontal regions kept clear, `[{ "center": [x, y], "radius": r }, { "min": [x, y], "max": [x, y] }]` (around a tree trunk, a path, a house) |
+
+| `motion` key | notes |
+|---|---|
+| `fall` | meters per second downward (negative rises: bubbles, embers) |
+| `drift` | `[x, y, z]` meters per second, added to the fall (wind) |
+| `sway` | `{ "amplitude": meters, "period": seconds }`: side-to-side flutter, each instance in its own direction, phase and a slightly different period (default period 2) |
+| `spin` | degrees per second around a random axis per instance, a number or `[min, max]` (the direction is random too) |
+
+Looping instances travel through the area's height when they fall or rise (so the area needs a height), or across it along the drift when they only drift. Each pass starts from a fresh random spot, centered so that drift doesn't empty one side. Everything is a function of time: `--frame`, `--times` and full renders show the same positions.
+
+**Performance:** instances are cheap. Even the software renderer (servers and cloud sessions without a GPU) renders 3000 moving petals at full quality in about 0.2 s per frame, and 20000 static grass blades in about 1 s per frame. The limit is 20000 per emitter; keep moving ones to a few thousand.
+
 ## animations
 
 Each track sets one property of one object over time. `target` is `"id.property"` or `"id.property.x|y|z"` for one component.
@@ -179,13 +220,15 @@ Each track has exactly one of `keys`, `spin`, `wave`, `orbit` (basics) or `follo
 { "target": "ball.position.z", "keys": [[0, 0.5], [0.4, 2.5, "inQuad"], [0.8, 0.5]], "ease": "outQuad" }
 ```
 
-Each key is `[time, value]` or `[time, value, "ease"]`; the ease shapes the segment that *starts* at that key, and `"ease"` on the track is the default (`inOutCubic` if unset).
+Each key is `[time, value]` or `[time, value, "ease"]`; the ease shapes the segment that *starts* at that key, and `"ease"` on the track is the default (`inOutCubic` if unset). Vector values can also be written flat, `[time, x, y, z]` or `[time, x, y, z, "ease"]` (same as `[time, [x, y, z]]`): the compact form generated tracks use.
 
 **Repeating keys:** `"repeat": true` plays the key range (first to last key) over and over, from the first key on. `"period": seconds` repeats it every `period` seconds instead, holding the last value in between (blink every 2 s: keys over 0.2 s, `"period": 2`). For a seamless loop make the last value equal the first.
 
 ```json
 { "target": "tip.scale", "keys": [[1, 0.1], [1.1, 0.16], [1.3, 0.1]], "period": 1 }
-``` Eases: `linear`, `step`, `inQuad`, `outQuad`, `inOutQuad`, `inCubic`, `outCubic`, `inOutCubic`, `inSine`, `outSine`, `inOutSine`, `inBack`, `outBack`, `inOutBack`, `outBounce`, `outElastic`. `outBack` and `outElastic` overshoot, which is great for pop-in scale animations.
+```
+
+Eases: `linear`, `step`, `inQuad`, `outQuad`, `inOutQuad`, `inCubic`, `outCubic`, `inOutCubic`, `inSine`, `outSine`, `inOutSine`, `inBack`, `outBack`, `inOutBack`, `outBounce`, `outElastic`. `outBack` and `outElastic` overshoot, which is great for pop-in scale animations.
 
 **spin**: adds a constant rotation speed in degrees per second, `[pitch, yaw, roll]`.
 
@@ -215,7 +258,7 @@ Each key is `[time, value]` or `[time, value, "ease"]`; the ease shapes the segm
 { "target": "cam.lookAt",   "follow": { "object": "bot", "offset": [0, 0, 0.7], "smoothing": 0.25 } }
 ```
 
-**path**: moves a `position` through points at an even speed.
+**path**: moves a `position` (or a `lookAt` point) through points at an even speed.
 
 ```json
 { "target": "car.position", "path": { "points": [[2, 0, 0], [0, 2, 0], [-2, 0, 0], [0, -2, 0]], "loop": true, "duration": 6, "face": true } }
@@ -227,7 +270,7 @@ Each key is `[time, value]` or `[time, value, "ease"]`; the ease shapes the segm
 | `curve` | `smooth` | `smooth` passes through every point, `linear` goes straight between them, `bezier` takes `point, handle, handle, point, ...` (3n + 1 points; 3n when looping) |
 | `start`, `duration` | 0, to the end of the clip | before `start` the object waits at the first point, after the end it stays at the last |
 | `loop` | false | closes the path and goes around again every `duration` |
-| `face` | false | turns the object (yaw) along its direction of travel. It adds to the object's own yaw, so use `rotation` to correct a model that doesn't face +X |
+| `face` | false | `position` paths: turns the object (yaw) along its direction of travel. It adds to the object's own yaw, so use `rotation` to correct a model that doesn't face +X |
 | `ease` | `linear` | over the whole trip (`inOutSine` starts and stops gently) |
 
 **bounce**: hops added on top of a `position.z` (its resting height). Use `"pivot": "bottom"` on the object so the squash stays on the floor.
@@ -262,6 +305,39 @@ Each key is `[time, value]` or `[time, value, "ease"]`; the ease shapes the segm
 The walk doesn't move the character: pair it with a `path` (with `face`) on the root. To keep feet from sliding, travel about 4 × leg length × sin(swing) per period.
 
 Tracks apply in order: `keys`, `orbit`, `follow` and `path` set the value, `spin`, `wave`, `bounce` and `walk` add to whatever is there, so a `wave` after a `keys` track bobs around the keyed motion. Put `walk` after any keyed tracks on the same joints.
+
+## Python scenes (.py)
+
+When a scene has many objects, scattered placement or procedural shapes, write a Python script that prints the scene JSON instead of the JSON itself. `cerender.py` renders it the same way (`render village.py --preview`): it runs the script with the same Python, renders what it printed from a temp file (nothing big is written next to the script), and resolves glTF paths relative to the script's folder. If the script fails you get its traceback; renderer errors still give JSON paths (`objects[12].emitter.count`). The script must print only the JSON to stdout (debug prints go to `sys.stderr`). To keep the JSON (to share it, or render it without Python) run `python scene.py > scene.json` yourself.
+
+`cerender_lib` (standard library only) is importable from the script without setup. It provides **tools, not things**: builders that map 1:1 onto this format, plus placement and path helpers. Keyword arguments use this file's key names; snake_case works too (`look_at` → `lookAt`, `min_gap` → `minGap`).
+
+```python
+from cerender_lib import Scene, scatter, look_along
+
+s = Scene(duration=6, width=1080, height=1350)
+s.environment(sky=["#9dbde3", "#eef3f8", "#e4ebf2"], ground="#eef2f7")
+for i, (x, y, z) in enumerate(scatter(12, {"min": [-14, -6, 0], "max": [14, 6, 0]}, min_gap=3.6, avoid=[{"min": [-30, -3], "max": [30, 3]}])):
+    s.add(f"house{i}", mesh="roundbox", color="#e8a87c", pivot="bottom", position=[x, y, 0])
+s.emitter("snow", "sphere", 900, {"min": [-12, -6, 0], "max": [12, 6, 7]}, size=0.04, motion={"fall": 0.9})
+s.light("sun", position=[3, -6, 6])
+s.camera("cam")
+s.animate(look_along("cam", [[-14, 0, 2.8], [0, 0, 2.4], [8, 0, 2.8]], duration=6))
+s.write()
+```
+
+| | |
+|---|---|
+| `Scene(duration=0, fps=30, width=1080, height=1080)` | the scene. Builders: `environment(**keys)`, `material(name, **keys)`, `add(id, **keys)` (any object, keys as in this file), `group(id, **keys)`, `light(id, type="directional", position, look_at, **keys)`, `camera(id="cam", position, look_at, **keys)`, `emitter(id, mesh, count, area, size, scale, rotation, motion, loop, min_gap, avoid, seed, **object_keys)`, `animate(target, **track)` or `animate(track_or_tracks)`. `write()` prints compact JSON with numbers rounded to 4 decimals; call it last |
+| `rng(seed)` | a seeded `random.Random`, so every run builds the same scene |
+| `scatter(count, area, min_gap=0, avoid=(), seed=1)` | up to `count` points `[x, y, z]`, areas and avoid regions written like an emitter's. For placing *different* things (houses built from parts, trees with random heights). For identical copies use an emitter: it's one object instead of hundreds |
+| `circle(center, radius, count, start=0)` | points around a horizontal circle |
+| `smooth(points, samples=8, loop=False)` | points along the same smooth curve `path` follows, for placing things along it (fence posts, lamps) |
+| `path(target, points, duration=None, start=0, loop=False, face=False, curve="smooth", ease=None)` | a `path` track (`target` is an id, or `"id.lookAt"`) |
+| `look_along(camera, points, duration, start=0, ahead=0.6, loop=False)` | a fly-through: two `path` tracks, the camera's `lookAt` running `ahead` seconds in front. Keep the path fairly level: a climbing path looks up |
+| `bake(target, fn, start, end, fps=30)` | a `keys` track sampling `fn(t)` (a number or `[x, y, z]`), in the compact key form, dropping keys a straight line already gives. **Last resort**: only for motion no feature covers |
+
+Prefer engine features to code that computes motion: emitters for particles and identical scattered copies, `repeat`/`period` and `wave` for cycles, `path` and `look_along` for travel, `walk` for characters. A baked track is a key per frame per object; 300 baked petals are about 1 MB even in the compact form, the emitter version is one object of a few hundred bytes.
 
 ## Gotchas
 

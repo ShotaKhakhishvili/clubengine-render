@@ -38,7 +38,8 @@ The first render downloads the renderer for your OS (~3 MB, once). Nothing to co
 scene.json ──► cerender.py ──► ClubEngine (offline render) ──► contact sheet ──► Claude checks ──► final render streamed into ffmpeg ──► MP4 / GIF
 ```
 
-- **One JSON file is the whole scene**: objects, materials, lights, camera, environment and animation tracks. Claude edits it like any other file.
+- **One JSON file is the whole scene**: objects, materials, lights, camera, environment and animation tracks. Claude edits it like any other file. Big or procedural scenes are a short Python script instead, using a small helper library, and render the same way.
+- **Particles and scatter built in**: an emitter turns one object into hundreds or thousands of instances (falling petals, snow, grass, stones), so a scene that used to be a baked file of hundreds of thousands of lines is one object.
 - **Fast feedback loop**: `--preview` renders 6 moments of the clip onto a small contact sheet, each tile labeled with its time, in about a second. `--times 3.5,3.9` or `--range 3.5-5 --step 0.1` zoom in on one beat, `--frame N` shows one frame at full quality.
 - **Errors an agent can act on**: the whole file is validated first, and every problem is reported with its JSON path and a "did you mean" hint.
 - **Good looks by default**: gradient sky, endless ground, ground shadows in each object's real shape, gentle tonemapping and 2× supersampling, so a first try already looks clean.
@@ -70,6 +71,8 @@ Full format: [`reference.md`](plugin/skills/render-scene/reference.md). Examples
 | Materials | color, roughness, metallic, emissive, unlit |
 | Lights | directional, point, spot |
 | Animation | keyframes with 16 easing curves and looping, spin, wave, orbit, follow (tracking camera), path (with auto-facing), bounce (with squash), walk cycles; parenting, pivots and look-at for rigs and cameras |
+| Emitters | thousands of instances from one object: falling/rising particles with drift, sway and spin that loop or settle, static scatter with min gap and keep-clear regions, color palettes; deterministic, any frame renders on its own |
+| Python scenes | `.py` scene scripts with `cerender_lib`: scene builders, seeded random, Poisson-style scatter, path and fly-through helpers, compact baked keys when nothing else fits |
 | Output | PNG frames, labeled contact sheets, MP4 and GIF (ffmpeg is found or downloaded automatically) |
 | Platforms | Windows x64, Linux x64 (also headless, without a GPU) |
 
@@ -87,7 +90,7 @@ The renderer is [**ClubEngine**](https://github.com/ShotaKhakhishvili/KIU_ClubEn
 ```
 External/KIU_ClubEngine   the engine, as a pinned submodule
 Project/                  the render project: scene parser, animation, scene shader
-plugin/                   the Claude Code plugin: skill, examples, cerender.py launcher
+plugin/                   the Claude Code plugin: skill, examples, cerender.py launcher, cerender_lib.py
 Tools/build.py            builds engine + project and packs the portable zip
 ```
 
