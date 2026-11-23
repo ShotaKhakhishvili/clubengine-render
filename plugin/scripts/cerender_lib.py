@@ -13,7 +13,7 @@ script and renders what it prints (python cerender.py render scene.py --preview)
     s.camera("cam", position=[6, -6, 4], look_at=[0, 0, 0.5])
     s.write()
 
-Tools, not things: everything maps 1:1 onto the scene format in reference.md. Keyword arguments
+Tools, not things: everything maps 1:1 onto the scene format (skills/render-scene/reference.md and python-lib.md). Keyword arguments
 use the format's key names; snake_case is accepted too (look_at -> lookAt, min_gap -> minGap).
 Prefer engine features (emitters, repeat, wave, path, walk) to baked keys: bake() is the last resort.
 Standard library only.

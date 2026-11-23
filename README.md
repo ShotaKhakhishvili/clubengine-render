@@ -61,7 +61,7 @@ A scene looks like this:
 }
 ```
 
-Full format: [`reference.md`](plugin/skills/render-scene/reference.md). Examples: [`examples/`](plugin/skills/render-scene/examples).
+Full format: [`reference.md`](plugin/skills/render-scene/reference.md) (core, with facts and limits) plus topic files next to it: [tracks](plugin/skills/render-scene/tracks.md), [emitters](plugin/skills/render-scene/emitters.md), [materials and lighting](plugin/skills/render-scene/materials-lighting.md), [camera](plugin/skills/render-scene/camera.md), [glTF](plugin/skills/render-scene/gltf.md), [Python scenes](plugin/skills/render-scene/python-lib.md), [CLI](plugin/skills/render-scene/cli.md). Examples: [`examples/`](plugin/skills/render-scene/examples).
 
 ## What's in it
 
